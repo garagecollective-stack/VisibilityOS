@@ -1,0 +1,36 @@
+{
+  "name": "@garage-seo/workers",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@garage-seo/dataforseo": "*",
+    "@garage-seo/db": "*",
+    "@garage-seo/ai": "*",
+    "bullmq": "^5.53.2",
+    "drizzle-orm": "^0.43.1",
+    "ioredis": "^5.6.1",
+    "node-cron": "^3.0.3",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "tsx": "^4.19.4",
+    "@types/node": "^22.15.3",
+    "@types/node-cron": "^3.0.11"
+  }
+}
