@@ -9,8 +9,12 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
+import { sql } from "drizzle-orm";
 import { clerkAuth, requireAuth } from "./middleware/auth.js";
 import { apiRateLimit } from "./middleware/rateLimit.js";
+import { getDb } from "./lib/db/index.js";
+import { getRedis, runRedisHealthCheck } from "./lib/redis/index.js";
+import { clickhouse, listClickHouseTables } from "./lib/clickhouse/index.js";
 
 import projectsRouter from "./routes/projects.js";
 import keywordsRouter from "./routes/keywords.js";
@@ -22,6 +26,28 @@ import geoRouter from "./routes/geo.js";
 import billingRouter, { razorpayWebhookHandler } from "./routes/billing.js";
 
 const app = new Hono();
+
+const expectedPostgresTables = [
+  "organizations",
+  "users",
+  "projects",
+  "tracked_keywords",
+  "keyword_lists",
+  "keyword_list_items",
+  "audit_runs",
+  "audit_issues",
+  "backlink_snapshots",
+  "geo_prompts",
+  "geo_results",
+  "reports",
+  "billing",
+] as const;
+
+const expectedClickHouseTables = [
+  "rank_history",
+  "gsc_metrics",
+  "keyword_metric_history",
+] as const;
 
 // ─── Global middleware ─────────────────────────────────────────────────────────
 
@@ -41,9 +67,108 @@ app.use(
 
 // ─── Public endpoints (no auth) ───────────────────────────────────────────────
 
-app.get("/health", (c) =>
-  c.json({ status: "ok", version: "1.0.0", timestamp: new Date().toISOString() })
-);
+app.get("/health", async (c) => {
+  const postgres = {
+    status: "connected" as "connected" | "error",
+    latency_ms: 0,
+    error: null as string | null,
+    tables_found: [] as string[],
+    tables_missing: [] as string[],
+  };
+
+  const redis = {
+    status: "connected" as "connected" | "error",
+    latency_ms: 0,
+    error: null as string | null,
+    ping: null as string | null,
+    write_read_test: "failed" as "passed" | "failed",
+    total_keys: 0,
+  };
+
+  const clickhouseService = {
+    status: "connected" as "connected" | "error",
+    latency_ms: 0,
+    error: null as string | null,
+    tables_found: [] as string[],
+    tables_missing: [] as string[],
+  };
+
+  await Promise.all([
+    (async () => {
+      const startedAt = Date.now();
+      try {
+        const db = getDb();
+        await db.execute(sql`SELECT 1`);
+        const tableRows = await db.execute(sql`
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+          ORDER BY table_name
+        `);
+        const tablesFound = tableRows.rows
+          .map((row) => row.table_name)
+          .filter((tableName): tableName is string => typeof tableName === "string");
+
+        postgres.latency_ms = Date.now() - startedAt;
+        postgres.tables_found = tablesFound;
+        postgres.tables_missing = expectedPostgresTables.filter(
+          (tableName) => !tablesFound.includes(tableName)
+        );
+      } catch (err) {
+        postgres.status = "error";
+        postgres.latency_ms = Date.now() - startedAt;
+        postgres.error = err instanceof Error ? err.message : String(err);
+      }
+    })(),
+    (async () => {
+      const startedAt = Date.now();
+      try {
+        const health = await runRedisHealthCheck(getRedis());
+        redis.latency_ms = Date.now() - startedAt;
+        redis.ping = health.ping;
+        redis.write_read_test = health.write_read_test;
+        redis.total_keys = health.total_keys;
+      } catch (err) {
+        redis.status = "error";
+        redis.latency_ms = Date.now() - startedAt;
+        redis.error = err instanceof Error ? err.message : String(err);
+      }
+    })(),
+    (async () => {
+      const startedAt = Date.now();
+      try {
+        await clickhouse.query("SELECT 1");
+        const tablesFound = await listClickHouseTables();
+        clickhouseService.latency_ms = Date.now() - startedAt;
+        clickhouseService.tables_found = tablesFound;
+        clickhouseService.tables_missing = expectedClickHouseTables.filter(
+          (tableName) => !tablesFound.includes(tableName)
+        );
+      } catch (err) {
+        clickhouseService.status = "error";
+        clickhouseService.latency_ms = Date.now() - startedAt;
+        clickhouseService.error = err instanceof Error ? err.message : String(err);
+        clickhouseService.tables_missing = [...expectedClickHouseTables];
+      }
+    })(),
+  ]);
+
+  const status =
+    postgres.status === "connected" &&
+    redis.status === "connected" &&
+    clickhouseService.status === "connected"
+      ? "ok"
+      : "degraded";
+
+  return c.json({
+    status,
+    services: {
+      postgres,
+      redis,
+      clickhouse: clickhouseService,
+    },
+  });
+});
 
 // Razorpay webhook — unauthenticated, verified by HMAC signature
 app.post("/api/billing/webhook/razorpay", razorpayWebhookHandler);

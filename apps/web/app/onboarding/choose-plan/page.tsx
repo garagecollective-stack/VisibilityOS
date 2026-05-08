@@ -118,7 +118,7 @@ export default function ChoosePlanPage() {
     }
 
     if (planId === "enterprise") {
-      window.open("mailto:sales@garageseo.ai?subject=Enterprise%20Plan%20Inquiry", "_blank");
+      window.open("mailto:sales@visibilityos.ai?subject=Enterprise%20Plan%20Inquiry", "_blank");
       return;
     }
 
@@ -160,7 +160,7 @@ export default function ChoosePlanPage() {
         key: keyId,
         amount,
         currency,
-        name: "Garage Collective SEO",
+        name: "VisibilityOS",
         description: `${plan.name} Plan — Monthly`,
         order_id: orderId,
         handler: async (response) => {

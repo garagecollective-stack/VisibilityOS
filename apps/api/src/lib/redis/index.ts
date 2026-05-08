@@ -24,3 +24,28 @@ export function makeCacheAdapter(redis: Redis) {
       redis.setex(key, ttlSeconds, value).then(() => undefined),
   };
 }
+
+export interface RedisHealthCheckResult {
+  ping: string;
+  write_read_test: "passed" | "failed";
+  total_keys: number;
+}
+
+export async function runRedisHealthCheck(redis = getRedis()): Promise<RedisHealthCheckResult> {
+  const testKey = "health:test";
+  let writeReadTest: "passed" | "failed" = "failed";
+
+  const ping = await redis.ping();
+  await redis.set(testKey, "ok", "EX", 60);
+  const value = await redis.get(testKey);
+  writeReadTest = value === "ok" ? "passed" : "failed";
+  await redis.del(testKey);
+
+  const totalKeys = await redis.dbsize();
+
+  return {
+    ping,
+    write_read_test: writeReadTest,
+    total_keys: totalKeys,
+  };
+}

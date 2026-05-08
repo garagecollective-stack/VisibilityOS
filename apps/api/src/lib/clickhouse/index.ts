@@ -69,3 +69,11 @@ export const clickhouse = {
     }
   },
 };
+
+export async function listClickHouseTables(): Promise<string[]> {
+  const rows = await clickhouse.query<Record<string, unknown>>("SHOW TABLES");
+  return rows
+    .map((row) => Object.values(row)[0])
+    .filter((value): value is string => typeof value === "string")
+    .sort((a, b) => a.localeCompare(b));
+}

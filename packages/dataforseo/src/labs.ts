@@ -74,11 +74,11 @@ export class LabsClient {
     const params = { keywords, location_code: locationCode, language_code: languageCode };
 
     const fetcher = async () => {
-      const res = await this.client.post<BulkKdItem>(
+      const res = await this.client.post<{ items: BulkKdItem[] }>(
         "/v3/dataforseo_labs/google/bulk_keyword_difficulty/live",
         [params]
       );
-      return res.tasks[0]?.result ?? [];
+      return res.tasks[0]?.result?.[0]?.items ?? [];
     };
 
     if (this.cache) {
