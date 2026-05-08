@@ -12,9 +12,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="px-4 h-14 border-b flex items-center">
           <Link href="/dashboard" className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
-              <span className="text-primary-foreground font-bold text-xs">G</span>
+              <span className="text-primary-foreground font-bold text-xs">V</span>
             </div>
-            <span className="font-semibold text-sm">Garage SEO</span>
+            <span className="font-semibold text-sm">VisibilityOS</span>
           </Link>
         </div>
 

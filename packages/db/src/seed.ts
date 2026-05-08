@@ -22,7 +22,7 @@ async function seed() {
   const orgId = createId();
   await db.insert(organizations).values({
     id: orgId,
-    name: "Garage Collective Demo",
+    name: "VisibilityOS Demo",
     slug: "garage-demo",
     plan: "agency",
   });
@@ -34,7 +34,7 @@ async function seed() {
     id: userId,
     orgId,
     clerkUserId: "user_demo_seed_001",
-    email: "demo@garagecollective.ai",
+    email: "demo@visibilityos.ai",
     role: "admin",
   });
 
@@ -44,8 +44,8 @@ async function seed() {
     {
       id: project1Id,
       orgId,
-      domain: "garagecollective.ai",
-      name: "Garage Collective",
+      domain: "visibilityos.ai",
+      name: "VisibilityOS",
       countryCode: "IN",
       languageCode: "en",
       settings: {

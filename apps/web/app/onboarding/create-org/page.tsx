@@ -78,7 +78,7 @@ export default function CreateOrgPage() {
               />
               {name && (
                 <p className="text-xs text-muted-foreground">
-                  URL: app.garageseo.ai/<strong>{slugify(name) || "your-workspace"}</strong>
+                  URL: app.visibilityos.ai/<strong>{slugify(name) || "your-workspace"}</strong>
                 </p>
               )}
             </div>

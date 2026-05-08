@@ -58,6 +58,30 @@ function classifyIntent(keyword: string): Intent {
   return "Commercial";
 }
 
+function normalizeLocationCode(locationCode: number | undefined): number {
+  if (!locationCode || locationCode <= 0) return 2840;
+  return locationCode;
+}
+
+function toKeywordRow(item: {
+  keyword: string;
+  search_volume?: number | null;
+  cpc?: number | null;
+  keyword_difficulty?: number | null;
+  monthly_searches?: Array<{ year: number; month: number; search_volume: number }> | null;
+  competition?: number | null;
+}) {
+  return {
+    keyword: item.keyword,
+    search_volume: item.search_volume ?? 0,
+    cpc: item.cpc ?? 0,
+    keyword_difficulty: item.keyword_difficulty ?? null,
+    intent: classifyIntent(item.keyword),
+    monthly_searches: item.monthly_searches ?? [],
+    competition: item.competition ?? null,
+  };
+}
+
 // ─── Mock data (used when DataForSEO credentials are absent) ──────────────────
 
 function makeMockOverview(keyword: string) {
@@ -121,6 +145,55 @@ function makeMockIdeas(keyword: string) {
   });
 }
 
+function clusterSupportingKeywords(keywords: Array<ReturnType<typeof toKeywordRow>>) {
+  const groups = new Map<string, Array<ReturnType<typeof toKeywordRow>>>();
+
+  for (const keyword of keywords) {
+    const parts = keyword.keyword.split(/\s+/);
+    const subtopic = parts.slice(0, 2).join(" ") || "General";
+    const bucket = groups.get(subtopic) ?? [];
+    bucket.push(keyword);
+    groups.set(subtopic, bucket);
+  }
+
+  return Array.from(groups.entries())
+    .slice(0, 6)
+    .map(([subtopic, rows]) => ({
+      subtopic,
+      keywords: rows.slice(0, 4),
+    }));
+}
+
+async function fetchKeywordIdeas(keyword: string, locationCode: number, languageCode: string) {
+  const normalizedLocationCode = normalizeLocationCode(locationCode);
+
+  if (!hasCreds()) {
+    return { ideas: makeMockIdeas(keyword).map((idea) => toKeywordRow(idea)) };
+  }
+
+  const redis = getRedis();
+  const cacheKey = `kw:${keyword}:${normalizedLocationCode}:${languageCode}:ideas`;
+  const cached = await redis.get(cacheKey);
+  if (cached) return JSON.parse(cached) as { ideas: Array<ReturnType<typeof toKeywordRow>> };
+
+  const dfs = getDataForSEO();
+  const raw = await dfs.keywords.getKeywordIdeas(keyword, normalizedLocationCode, languageCode);
+  const result = {
+    ideas: raw.map((idea) =>
+      toKeywordRow({
+        keyword: idea.keyword,
+        search_volume: idea.search_volume,
+        cpc: idea.cpc,
+        keyword_difficulty: idea.keyword_difficulty ?? null,
+        monthly_searches: idea.monthly_searches,
+        competition: idea.competition,
+      })
+    ),
+  };
+  await redis.setex(cacheKey, CACHE_TTL.KEYWORD_DATA, JSON.stringify(result));
+  return result;
+}
+
 // ─── Overview ─────────────────────────────────────────────────────────────────
 
 router.post(
@@ -151,11 +224,15 @@ router.post(
       // if (cached) return c.json(JSON.parse(cached) as ReturnType<typeof makeMockOverview>);
 
       const dfs = getDataForSEO();
-      const rawSuggestions = await dfs.keywords.getSuggestions(keyword, locationCode, languageCode);
-      console.log("[keywords/overview] raw suggestions sample:", JSON.stringify(rawSuggestions?.slice(0, 2), null, 2));
+      let rawSuggestions: Awaited<ReturnType<typeof dfs.keywords.getSuggestions>> = [];
+      try {
+        rawSuggestions = await dfs.keywords.getSuggestions(keyword, locationCode, languageCode);
+      } catch (suggestErr) {
+        console.warn("[keywords/overview] suggestions fetch failed (non-fatal):", suggestErr instanceof Error ? suggestErr.message : suggestErr);
+      }
 
       // Guard against items with missing keyword field
-      const suggestions = (rawSuggestions ?? []).filter((s) => typeof s?.keyword === "string");
+      const suggestions = rawSuggestions.filter((s) => typeof s?.keyword === "string");
 
       const kwLower = keyword.toLowerCase();
       const exactMatch = suggestions.find((s) => s.keyword.toLowerCase() === kwLower);
@@ -183,7 +260,12 @@ router.post(
           monthly_searches: exactMatch.monthly_searches ?? [],
         };
       } else {
-        const volume = await dfs.keywords.getBulkVolume([keyword], locationCode, languageCode);
+        let volume: Awaited<ReturnType<typeof dfs.keywords.getBulkVolume>> = [];
+        try {
+          volume = await dfs.keywords.getBulkVolume([keyword], locationCode, languageCode);
+        } catch (volErr) {
+          console.warn("[keywords/overview] volume fetch failed (non-fatal):", volErr instanceof Error ? volErr.message : volErr);
+        }
         const v = volume?.[0];
         main = v?.keyword
           ? {
@@ -256,6 +338,22 @@ router.post(
 
 // ─── Ideas ────────────────────────────────────────────────────────────────────
 
+router.get("/ideas", async (c) => {
+  const keyword = c.req.query("keyword");
+  if (!keyword) return c.json({ error: "keyword is required" }, 400);
+
+  const locationCode = Number(c.req.query("location") ?? c.req.query("locationCode") ?? "2356");
+  const languageCode = c.req.query("languageCode") ?? "en";
+
+  try {
+    const result = await fetchKeywordIdeas(keyword, locationCode, languageCode);
+    return c.json(result);
+  } catch (err) {
+    console.error("[keywords/ideas:get]", err);
+    return c.json({ error: "Failed to fetch keyword ideas" }, 500);
+  }
+});
+
 router.post(
   "/ideas",
   zValidator(
@@ -269,28 +367,8 @@ router.post(
   async (c) => {
     const { keyword, locationCode, languageCode } = c.req.valid("json");
 
-    if (!hasCreds()) {
-      return c.json({ ideas: makeMockIdeas(keyword) });
-    }
-
-    const redis = getRedis();
-    const cacheKey = `kw:${keyword}:${locationCode}:${languageCode}:ideas`;
-    const cached = await redis.get(cacheKey);
-    if (cached) return c.json(JSON.parse(cached) as { ideas: ReturnType<typeof makeMockIdeas> });
-
     try {
-      const dfs = getDataForSEO();
-      const raw = await dfs.keywords.getKeywordIdeas(keyword, locationCode, languageCode);
-      const result = {
-        ideas: raw.map((idea) => ({
-          keyword: idea.keyword,
-          search_volume: idea.search_volume,
-          cpc: idea.cpc,
-          keyword_difficulty: idea.keyword_difficulty ?? null,
-          intent: classifyIntent(idea.keyword),
-        })),
-      };
-      await redis.setex(cacheKey, CACHE_TTL.KEYWORD_DATA, JSON.stringify(result));
+      const result = await fetchKeywordIdeas(keyword, locationCode, languageCode);
       return c.json(result);
     } catch (err) {
       console.error("[keywords/ideas]", err);
@@ -409,7 +487,274 @@ router.post(
   }
 );
 
+router.post(
+  "/bulk",
+  zValidator(
+    "json",
+    z.object({
+      keywords: z.array(z.string().min(1).max(200)).min(1).max(200),
+      locationCode: z.number().int().nonnegative().default(2356),
+      languageCode: z.string().default("en"),
+    })
+  ),
+  async (c) => {
+    const { keywords, locationCode, languageCode } = c.req.valid("json");
+    const normalizedLocationCode = normalizeLocationCode(locationCode);
+
+    try {
+      if (!hasCreds()) {
+        const results = keywords.map((keyword, index) =>
+          toKeywordRow({
+            keyword,
+            search_volume: 300 + index * 120,
+            cpc: 1.2 + (index % 7),
+            keyword_difficulty: 18 + (index * 7) % 80,
+            competition: Number((0.15 + ((index * 13) % 70) / 100).toFixed(2)),
+            monthly_searches: Array.from({ length: 12 }, (_, monthOffset) => ({
+              year: new Date().getFullYear(),
+              month: monthOffset + 1,
+              search_volume: 200 + ((index + monthOffset) * 97) % 2000,
+            })),
+          })
+        );
+        return c.json({ results });
+      }
+
+      const dfs = getDataForSEO();
+      const [volumeRows, kdRows] = await Promise.allSettled([
+        dfs.keywords.getBulkVolume(keywords, normalizedLocationCode, languageCode),
+        dfs.labs.getBulkKeywordDifficulty(keywords, normalizedLocationCode, languageCode),
+      ]);
+
+      if (volumeRows.status === "rejected") {
+        console.warn("[keywords/bulk] volume fetch failed (non-fatal):", volumeRows.reason instanceof Error ? volumeRows.reason.message : volumeRows.reason);
+      }
+      if (kdRows.status === "rejected") {
+        console.warn("[keywords/bulk] KD fetch failed (non-fatal):", kdRows.reason instanceof Error ? kdRows.reason.message : kdRows.reason);
+      }
+
+      const volumeData = volumeRows.status === "fulfilled" ? volumeRows.value : [];
+      const kdData = kdRows.status === "fulfilled" ? kdRows.value : [];
+
+      const kdMap = new Map(kdData.map((item) => [item.keyword.toLowerCase(), item.keyword_difficulty]));
+      const volumeMap = new Map(volumeData.map((item) => [item.keyword.toLowerCase(), item]));
+
+      const results = keywords.map((keyword) => {
+        const volume = volumeMap.get(keyword.toLowerCase());
+        return toKeywordRow({
+          keyword,
+          search_volume: volume?.search_volume ?? 0,
+          cpc: volume?.cpc ?? 0,
+          keyword_difficulty: kdMap.get(keyword.toLowerCase()) ?? null,
+          monthly_searches: volume?.monthly_searches ?? [],
+          competition: volume?.competition ?? null,
+        });
+      });
+
+      return c.json({ results });
+    } catch (err) {
+      console.error("[keywords/bulk]", err);
+      return c.json({ error: "Failed to analyze keywords" }, 500);
+    }
+  }
+);
+
+router.post(
+  "/strategy",
+  zValidator(
+    "json",
+    z.object({
+      topic: z.string().min(3).max(200),
+      url: z.string().url().optional(),
+      locationCode: z.number().int().nonnegative().default(2356),
+      languageCode: z.string().default("en"),
+    })
+  ),
+  async (c) => {
+    const { topic, url, locationCode, languageCode } = c.req.valid("json");
+    const seed = url ? `${topic} ${new URL(url).hostname.replace(/^www\./, "")}` : topic;
+
+    try {
+      const ideas = await fetchKeywordIdeas(seed, locationCode, languageCode);
+      const sorted = [...ideas.ideas].sort((a, b) => b.search_volume - a.search_volume);
+      const pillarKeywords = sorted.slice(0, 5);
+      const supportingKeywords = clusterSupportingKeywords(sorted.slice(5, 25));
+      const quickWins = sorted
+        .filter((item) => (item.keyword_difficulty ?? 101) < 30 && item.search_volume > 500)
+        .slice(0, 12);
+
+      return c.json({
+        pillarKeywords,
+        supportingKeywords,
+        quickWins,
+      });
+    } catch (err) {
+      console.error("[keywords/strategy]", err);
+      return c.json({ error: "Failed to build keyword strategy" }, 500);
+    }
+  }
+);
+
 // ─── Keyword Lists ─────────────────────────────────────────────────────────────
+
+router.get("/lists", async (c) => {
+  const orgId = c.get("orgId");
+  const db = getDb();
+  const projectId = c.req.query("projectId");
+
+  const orgProjects = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.orgId, orgId));
+
+  const allowedProjects = projectId
+    ? orgProjects.filter((project) => project.id === projectId)
+    : orgProjects;
+
+  if (projectId && allowedProjects.length === 0) {
+    return c.json({ error: "Project not found" }, 404);
+  }
+  if (allowedProjects.length === 0) return c.json({ lists: [] });
+
+  const projectIds = allowedProjects.map((project) => project.id);
+  const projectMap = new Map(
+    allowedProjects.map((project) => [project.id, { name: project.name, domain: project.domain }])
+  );
+
+  const lists = await db.query.keywordLists.findMany({
+    where: inArray(keywordLists.projectId, projectIds),
+    with: { items: { with: { keyword: true } } },
+  });
+
+  return c.json({
+    lists: lists.map((list) => ({
+      ...list,
+      projectName: projectMap.get(list.projectId)?.name ?? "Unknown Project",
+      projectDomain: projectMap.get(list.projectId)?.domain ?? "",
+    })),
+  });
+});
+
+router.post(
+  "/lists",
+  zValidator(
+    "json",
+    z.object({
+      name: z.string().min(1).max(100),
+      projectId: z.string().optional(),
+    })
+  ),
+  async (c) => {
+    const orgId = c.get("orgId");
+    const db = getDb();
+    const { name, projectId } = c.req.valid("json");
+
+    const orgProjects = await db
+      .select()
+      .from(projects)
+      .where(eq(projects.orgId, orgId));
+
+    const project =
+      (projectId ? orgProjects.find((item) => item.id === projectId) : undefined) ??
+      orgProjects[0];
+
+    if (!project) return c.json({ error: "Project not found" }, 404);
+
+    const [list] = await db
+      .insert(keywordLists)
+      .values({ id: createId(), projectId: project.id, name })
+      .returning();
+
+    return c.json({ list }, 201);
+  }
+);
+
+router.delete("/lists/:listId", async (c) => {
+  const orgId = c.get("orgId");
+  const db = getDb();
+  const { listId } = c.req.param();
+
+  const list = await db.query.keywordLists.findFirst({
+    where: eq(keywordLists.id, listId),
+    with: { project: true },
+  });
+  if (!list || list.project.orgId !== orgId) {
+    return c.json({ error: "List not found" }, 404);
+  }
+
+  await db.delete(keywordLists).where(eq(keywordLists.id, listId));
+  return c.json({ success: true });
+});
+
+router.post(
+  "/lists/:listId/keywords",
+  enforcePlanLimit("keywords"),
+  zValidator(
+    "json",
+    z.object({
+      keywords: z.array(z.string().min(1).max(200)).min(1).max(200),
+      locationCode: z.number().int().positive().default(2356),
+      languageCode: z.string().default("en"),
+    })
+  ),
+  async (c) => {
+    const orgId = c.get("orgId");
+    const db = getDb();
+    const { listId } = c.req.param();
+    const { keywords, locationCode, languageCode } = c.req.valid("json");
+
+    const list = await db.query.keywordLists.findFirst({
+      where: eq(keywordLists.id, listId),
+      with: { project: true },
+    });
+    if (!list || list.project.orgId !== orgId) {
+      return c.json({ error: "List not found" }, 404);
+    }
+
+    const projectId = list.projectId;
+    const existing = await db
+      .select()
+      .from(trackedKeywords)
+      .where(and(eq(trackedKeywords.projectId, projectId), inArray(trackedKeywords.keyword, keywords)));
+    const existingMap = new Map(existing.map((item) => [item.keyword, item]));
+
+    const newKeywords = keywords.filter((keyword) => !existingMap.has(keyword));
+    if (newKeywords.length > 0) {
+      const inserted = await db
+        .insert(trackedKeywords)
+        .values(
+          newKeywords.map((keyword) => ({
+            id: createId(),
+            projectId,
+            keyword,
+            locationCode: String(locationCode),
+            languageCode,
+            device: "desktop" as const,
+            isActive: true,
+          }))
+        )
+        .returning();
+      inserted.forEach((item) => existingMap.set(item.keyword, item));
+    }
+
+    const allKeywordIds = keywords.map((keyword) => existingMap.get(keyword)!.id);
+    const existingItems = await db
+      .select()
+      .from(keywordListItems)
+      .where(and(eq(keywordListItems.listId, listId), inArray(keywordListItems.keywordId, allKeywordIds)));
+    const existingItemIds = new Set(existingItems.map((item) => item.keywordId));
+
+    const rows = allKeywordIds
+      .filter((keywordId) => !existingItemIds.has(keywordId))
+      .map((keywordId) => ({ id: createId(), listId, keywordId }));
+
+    if (rows.length > 0) {
+      await db.insert(keywordListItems).values(rows);
+    }
+
+    return c.json({ added: rows.length }, 201);
+  }
+);
 
 router.get("/projects/:projectId/lists", async (c) => {
   const orgId = c.get("orgId");

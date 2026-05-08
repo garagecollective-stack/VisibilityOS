@@ -69,6 +69,7 @@ export class DataForSEOClient {
       const requestId = Math.random().toString(36).slice(2, 9);
       const startMs = Date.now();
       console.log(`[DataForSEO] [${requestId}] POST ${path}`);
+      console.log(`[DataForSEO] [${requestId}] Request body: ${JSON.stringify(body)}`);
 
       try {
         const res = await fetch(`${this.baseUrl}${path}`, {

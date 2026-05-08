@@ -7,9 +7,9 @@ export default function OnboardingLayout({ children }: { children: React.ReactNo
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-xs">G</span>
+              <span className="text-primary-foreground font-bold text-xs">V</span>
             </div>
-            <span className="font-semibold text-sm">Garage SEO</span>
+            <span className="font-semibold text-sm">VisibilityOS</span>
           </div>
           <UserButton afterSignOutUrl="/sign-in" />
         </div>
