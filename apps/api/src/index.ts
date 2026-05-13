@@ -9,7 +9,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
-import { sql } from "drizzle-orm";
+import { sql, and, eq, lt } from "drizzle-orm";
+import { auditRuns } from "@garage-seo/db";
 import { clerkAuth, requireAuth } from "./middleware/auth.js";
 import { apiRateLimit } from "./middleware/rateLimit.js";
 import { getDb } from "./lib/db/index.js";
@@ -210,6 +211,35 @@ app.onError((err, c) => {
 // ─── Start ─────────────────────────────────────────────────────────────────────
 
 const port = parseInt(process.env["PORT"] ?? "3001", 10);
+
+// One-time startup reconciliation: mark interrupted audits as failed.
+// If the API process restarts while an audit is running, the row is left
+// stuck at status='running' forever. Anything older than 15 minutes is
+// almost certainly orphaned by a restart.
+async function reconcileStuckAudits(): Promise<void> {
+  try {
+    const db = getDb();
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000);
+    const updated = await db
+      .update(auditRuns)
+      .set({
+        status: "failed",
+        completedAt: new Date(),
+        failureReason: "Interrupted — server restarted",
+      })
+      .where(and(eq(auditRuns.status, "running"), lt(auditRuns.startedAt, cutoff)))
+      .returning({ id: auditRuns.id });
+    if (updated.length > 0) {
+      console.log(
+        `[startup] reconciled ${updated.length} stuck audit run(s) as failed (interrupted — server restarted): ${updated.map((r) => r.id).join(", ")}`
+      );
+    }
+  } catch (err) {
+    console.error("[startup] failed to reconcile stuck audits:", err instanceof Error ? err.message : err);
+  }
+}
+
+void reconcileStuckAudits();
 
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[API] Listening on http://localhost:${info.port}`);

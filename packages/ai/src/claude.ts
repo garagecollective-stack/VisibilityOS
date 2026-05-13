@@ -5,6 +5,61 @@ import type { ContentAnalysis, ClaudeUsage } from "./types.js";
 const SONNET = "claude-sonnet-4-6";
 const HAIKU = "claude-haiku-4-5-20251001";
 
+export interface KeywordStrategyInputKeyword {
+  keyword: string;
+  volume: number;
+  kd: number | null;
+  cpc: number;
+  intent: string;
+}
+
+export interface KeywordStrategyInput {
+  topic: string;
+  targetUrl?: string;
+  locationCode: number;
+  keywordData: KeywordStrategyInputKeyword[];
+}
+
+export interface KeywordStrategyOutput {
+  pillar: {
+    keyword: string;
+    volume: number;
+    kd: number;
+    cpc: number;
+    rationale: string;
+  };
+  clusters: Array<{
+    topic: string;
+    pillar_page: {
+      keyword: string;
+      volume: number;
+      kd: number;
+      content_type: string;
+    };
+    supporting_keywords: Array<{
+      keyword: string;
+      volume: number;
+      kd: number;
+      is_quick_win: boolean;
+    }>;
+  }>;
+  content_calendar: Array<{
+    week: number;
+    content_type: string;
+    keyword: string;
+    estimated_volume: number;
+    priority: "high" | "medium" | "low";
+  }>;
+  summary: string;
+}
+
+function extractJsonBlock(text: string): string {
+  const trimmed = text.trim();
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) return fenceMatch[1]!.trim();
+  return trimmed;
+}
+
 export class ClaudeClient {
   private readonly client: Anthropic;
 
@@ -105,6 +160,84 @@ export class ClaudeClient {
 
     const text = res.content.find((b) => b.type === "text")?.text ?? "{}";
     return JSON.parse(text) as { severity: "critical" | "warning" | "notice"; recommendation: string };
+  }
+
+  /**
+   * Generate a structured SEO keyword strategy from real keyword data.
+   * Uses Sonnet — strategy generation needs strong reasoning.
+   */
+  async generateKeywordStrategy(input: KeywordStrategyInput): Promise<KeywordStrategyOutput> {
+    const systemPrompt =
+      "You are an expert SEO strategist. Given a topic and keyword data, create a comprehensive keyword strategy. Always respond with valid JSON only, no markdown, no explanation outside the JSON.";
+
+    const schemaJson = `{
+  "pillar": {
+    "keyword": "string",
+    "volume": 0,
+    "kd": 0,
+    "cpc": 0,
+    "rationale": "string"
+  },
+  "clusters": [
+    {
+      "topic": "string",
+      "pillar_page": {
+        "keyword": "string",
+        "volume": 0,
+        "kd": 0,
+        "content_type": "Blog Post | Landing Page | FAQ | Guide | Comparison"
+      },
+      "supporting_keywords": [
+        { "keyword": "string", "volume": 0, "kd": 0, "is_quick_win": false }
+      ]
+    }
+  ],
+  "content_calendar": [
+    {
+      "week": 1,
+      "content_type": "Blog Post | Landing Page | FAQ | Guide | Comparison",
+      "keyword": "string",
+      "estimated_volume": 0,
+      "priority": "high | medium | low"
+    }
+  ],
+  "summary": "string"
+}`;
+
+    const userPrompt = `Topic: ${input.topic}
+Target URL: ${input.targetUrl ?? "none"}
+Location: ${input.locationCode}
+
+Here is real keyword data for this topic:
+${JSON.stringify(input.keywordData, null, 2)}
+
+Create a keyword strategy following this exact JSON schema:
+${schemaJson}
+
+Rules:
+- pillar keyword should be highest volume with moderate KD
+- Create 3-5 clusters that make logical content sense
+- Mark keywords as quick_win if KD < 35 AND volume > 200
+- Content calendar should prioritize quick wins first
+- All keywords in the response must come from the provided keyword data (do not invent keywords)
+- Keep rationale concise (1-2 sentences)
+- Summary should be 2-3 sentences describing the overall strategy`;
+
+    const res = await this.client.messages.create({
+      model: SONNET,
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+
+    const text = res.content.find((b) => b.type === "text")?.text ?? "{}";
+    const cleaned = extractJsonBlock(text);
+
+    try {
+      return JSON.parse(cleaned) as KeywordStrategyOutput;
+    } catch {
+      throw new Error(`Claude returned invalid strategy JSON: ${cleaned.slice(0, 200)}`);
+    }
   }
 
   /**

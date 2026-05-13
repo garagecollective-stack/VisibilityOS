@@ -1,226 +1,303 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
-import { IntentBadge } from "@/components/keywords/intent-badge";
-import { KdBadge } from "@/components/keywords/kd-badge";
+import { Bookmark, Download, Layers, RotateCcw } from "lucide-react";
+import { SaveToListDialog } from "@/components/keywords/save-to-list-dialog";
+import { StrategyCalendar } from "@/components/keywords/strategy-calendar";
+import { StrategyClusterCard } from "@/components/keywords/strategy-cluster-card";
+import { StrategyLoading } from "@/components/keywords/strategy-loading";
+import { StrategyPillarCard } from "@/components/keywords/strategy-pillar-card";
+import { StrategySummary } from "@/components/keywords/strategy-summary";
+import { CountrySelector } from "@/components/shared/country-selector";
+import { DeviceToggle, type Device } from "@/components/shared/device-toggle";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { apiClient } from "@/lib/api";
-import { formatMetric, type KeywordBulkRow, type KeywordStrategyResult } from "@/lib/keywords";
+import { downloadCsv } from "@/lib/export-csv";
+import type { KeywordStrategyResult } from "@/lib/keywords";
+import { ssGet, ssParse, ssSet, ssStringify } from "@/lib/session-store";
+
+interface StrategyInputs {
+  topic: string;
+  url: string;
+  locationCode: number;
+  device: Device;
+}
 
 export default function KeywordStrategyPage() {
   const { getToken } = useAuth();
   const [topic, setTopic] = useState("");
   const [url, setUrl] = useState("");
+  const [location, setLocation] = useState<string>("2356");
+  const [device, setDevice] = useState<Device>("desktop");
+
+  const [results, setResults] = useState<KeywordStrategyResult | null>(null);
+  const [resultsFor, setResultsFor] = useState("");
+
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [dialogKeywords, setDialogKeywords] = useState<string[]>([]);
+
+  useEffect(() => {
+    const t = ssGet("lastStrategyTopic");
+    const u = ssGet("lastStrategyUrl");
+    const storedLocation = ssGet("lastStrategyLocation");
+    const storedDevice = ssGet("lastStrategyDevice");
+    const data = ssParse<KeywordStrategyResult>("lastStrategyResults");
+    if (storedLocation) setLocation(storedLocation);
+    if (storedDevice === "desktop" || storedDevice === "mobile") setDevice(storedDevice);
+    if (t && data) {
+      setTopic(t);
+      if (u) setUrl(u);
+      setResults(data);
+      setResultsFor(t);
+    }
+  }, []);
 
   const strategyMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (inputs: StrategyInputs) => {
       const token = await getToken();
       return apiClient<KeywordStrategyResult>("/keywords/strategy", {
         method: "POST",
-        body: JSON.stringify({ topic: topic.trim(), url: url.trim() || undefined }),
+        body: JSON.stringify({
+          topic: inputs.topic,
+          targetUrl: inputs.url || undefined,
+          locationCode: inputs.locationCode,
+          device: inputs.device,
+        }),
         token: token ?? undefined,
       });
     },
+    onSuccess: (data, inputs) => {
+      setResults(data);
+      setResultsFor(inputs.topic);
+      ssSet("lastStrategyTopic", inputs.topic);
+      ssSet("lastStrategyUrl", inputs.url);
+      ssSet("lastStrategyLocation", String(inputs.locationCode));
+      ssSet("lastStrategyDevice", inputs.device);
+      ssStringify("lastStrategyResults", data);
+    },
   });
+
+  const isPending = strategyMutation.isPending;
+
+  const handleBuild = () => {
+    if (!topic.trim()) return;
+    setResults(null);
+    strategyMutation.mutate({
+      topic: topic.trim(),
+      url: url.trim(),
+      locationCode: Number(location),
+      device,
+    });
+  };
+
+  const handleRegenerate = () => {
+    if (!resultsFor && !topic.trim()) return;
+    setResults(null);
+    strategyMutation.mutate({
+      topic: resultsFor || topic.trim(),
+      url: url.trim(),
+      locationCode: Number(location),
+      device,
+    });
+  };
+
+  const quickWinKeywords = useMemo(() => {
+    if (!results) return new Set<string>();
+    const set = new Set<string>();
+    for (const c of results.clusters) {
+      for (const k of c.supporting_keywords) if (k.is_quick_win) set.add(k.keyword);
+    }
+    return set;
+  }, [results]);
+
+  const allKeywords = useMemo(() => {
+    if (!results) return [] as string[];
+    const set = new Set<string>();
+    set.add(results.pillar.keyword);
+    for (const c of results.clusters) {
+      set.add(c.pillar_page.keyword);
+      for (const k of c.supporting_keywords) set.add(k.keyword);
+    }
+    for (const item of results.content_calendar) set.add(item.keyword);
+    return Array.from(set);
+  }, [results]);
+
+  const openSave = (keywords: string[]) => {
+    setDialogKeywords(keywords);
+    setSaveDialogOpen(true);
+  };
+
+  const handleExportCsv = () => {
+    if (!results) return;
+    const rows: string[][] = [["Keyword", "Cluster", "Content Type", "Volume", "KD"]];
+    rows.push([
+      results.pillar.keyword,
+      "(Pillar)",
+      "Pillar Keyword",
+      String(results.pillar.volume),
+      String(results.pillar.kd),
+    ]);
+    for (const c of results.clusters) {
+      rows.push([
+        c.pillar_page.keyword,
+        c.topic,
+        c.pillar_page.content_type,
+        String(c.pillar_page.volume),
+        String(c.pillar_page.kd),
+      ]);
+      for (const k of c.supporting_keywords) {
+        rows.push([
+          k.keyword,
+          c.topic,
+          "Supporting",
+          String(k.volume),
+          String(k.kd),
+        ]);
+      }
+    }
+    downloadCsv(`strategy-${resultsFor.replace(/\s+/g, "-")}.csv`, rows);
+  };
+
+  const showEmpty = results === null && !isPending && !strategyMutation.isError;
+  const showResults = results !== null && !isPending;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="space-y-2">
         <h2 className="text-xl font-semibold">Keyword Strategy Builder</h2>
         <p className="text-sm text-muted-foreground">
-          Turn a topic or page URL into a pillar cluster, supporting terms, and quick-win opportunities.
+          Turn a topic into a Claude-generated keyword strategy: pillar, clusters, quick wins, and an 8-week content calendar.
         </p>
       </div>
 
       <Card>
-        <CardContent className="grid gap-4 p-6 md:grid-cols-[1fr_1fr_auto] md:items-end">
-          <div className="space-y-2">
-            <Label htmlFor="topic">Target topic or niche</Label>
-            <Input
-              id="topic"
-              placeholder="CRM software for small business"
-              value={topic}
-              onChange={(event) => setTopic(event.target.value)}
-            />
+        <CardContent className="space-y-4 p-6">
+          <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
+            <div className="space-y-2">
+              <Label htmlFor="topic">Target topic or niche</Label>
+              <Input
+                id="topic"
+                placeholder="CRM software for small business"
+                value={topic}
+                onChange={(event) => setTopic(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="url">Target URL (optional)</Label>
+              <Input
+                id="url"
+                placeholder="https://example.com/crm"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="url">Target URL (optional)</Label>
-            <Input
-              id="url"
-              placeholder="https://example.com/crm"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-            />
+          <div className="flex flex-wrap items-center gap-3">
+            <CountrySelector value={location} onValueChange={setLocation} />
+            <DeviceToggle value={device} onChange={setDevice} />
+            <div className="ml-auto">
+              <Button onClick={handleBuild} disabled={!topic.trim() || isPending}>
+                <Layers className="mr-1.5 h-4 w-4" />
+                {isPending ? "Building..." : "Build Strategy"}
+              </Button>
+            </div>
           </div>
-          <Button onClick={() => strategyMutation.mutate()} disabled={!topic.trim() || strategyMutation.isPending}>
-            {strategyMutation.isPending ? "Building..." : "Build Strategy"}
-          </Button>
         </CardContent>
       </Card>
 
       {strategyMutation.isError && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-          {strategyMutation.error instanceof Error ? strategyMutation.error.message : "Strategy build failed."}
+          {strategyMutation.error instanceof Error
+            ? strategyMutation.error.message
+            : "Strategy build failed."}
         </div>
       )}
 
-      {!strategyMutation.data && !strategyMutation.isPending && (
+      {showEmpty && (
         <Card className="border-dashed">
           <CardContent className="py-14 text-center text-sm text-muted-foreground">
-            Enter a topic to map a pillar keyword cluster and identify low-difficulty quick wins.
+            Enter a topic to map a pillar keyword cluster, supporting keywords, quick wins, and an 8-week content plan.
           </CardContent>
         </Card>
       )}
 
-      {strategyMutation.isPending && <StrategySkeleton />}
+      {isPending && <StrategyLoading />}
 
-      {strategyMutation.data && !strategyMutation.isPending && (
+      {showResults && results && (
         <div className="space-y-6">
-          <KeywordSection
-            title="Pillar Keywords"
-            description="Head terms that should anchor the primary landing page and top-level content structure."
-            rows={strategyMutation.data.pillarKeywords}
+          <p className="text-xs text-muted-foreground">
+            Showing previous results for:{" "}
+            <span className="font-medium text-foreground">{resultsFor}</span>
+          </p>
+
+          <StrategySummary strategy={results} />
+
+          <StrategyPillarCard
+            pillar={results.pillar}
+            onSave={(kw) => openSave([kw])}
           />
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Supporting Keywords</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Long-tail opportunities grouped by subtopic so you can plan clusters and supporting content.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {strategyMutation.data.supportingKeywords.length === 0 ? (
-                <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                  No supporting keywords were generated for this topic.
-                </div>
-              ) : (
-                strategyMutation.data.supportingKeywords.map((group) => (
-                  <div key={group.subtopic} className="space-y-3">
-                    <div>
-                      <h3 className="font-medium">{group.subtopic}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        Related long-tail opportunities in this subtopic cluster.
-                      </p>
-                    </div>
-                    <KeywordTable rows={group.keywords} />
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Content Clusters</h3>
+                <p className="text-sm text-muted-foreground">
+                  {results.clusters.length} clusters · expand any group to see its supporting keywords
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {results.clusters.map((cluster, i) => (
+                <StrategyClusterCard
+                  key={`${cluster.topic}-${i}`}
+                  cluster={cluster}
+                  defaultOpen
+                  onSaveKeyword={(kw) => openSave([kw])}
+                  onSaveCluster={(kws) => openSave(kws)}
+                />
+              ))}
+            </div>
+          </div>
 
-          <Card className="border-orange-200 bg-orange-50/40">
-            <CardHeader>
-              <CardTitle className="text-lg">Quick Wins</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Keywords with KD under 30 and monthly volume above 500.
-              </p>
-            </CardHeader>
-            <CardContent>
-              {strategyMutation.data.quickWins.length === 0 ? (
-                <div className="rounded-lg border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">
-                  No quick wins matched the current thresholds.
-                </div>
-              ) : (
-                <KeywordTable rows={strategyMutation.data.quickWins} />
-              )}
-            </CardContent>
-          </Card>
+          <StrategyCalendar items={results.content_calendar} quickWinKeywords={quickWinKeywords} />
         </div>
       )}
-    </div>
-  );
-}
 
-function KeywordSection({
-  title,
-  description,
-  rows,
-}: {
-  title: string;
-  description: string;
-  rows: KeywordBulkRow[];
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">{title}</CardTitle>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </CardHeader>
-      <CardContent>
-        {rows.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-            No keywords were generated for this section.
+      {/* Sticky actions bar — only when results exist */}
+      {showResults && (
+        <div className="sticky bottom-4 z-10">
+          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 rounded-lg border bg-popover/95 px-4 py-3 shadow-lg backdrop-blur">
+            <span className="text-sm font-medium">
+              {allKeywords.length} keyword{allKeywords.length === 1 ? "" : "s"} in this strategy
+            </span>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={handleRegenerate} disabled={isPending}>
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                Regenerate
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleExportCsv}>
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Export Strategy CSV
+              </Button>
+              <Button size="sm" onClick={() => openSave(allKeywords)}>
+                <Bookmark className="mr-1.5 h-3.5 w-3.5" />
+                Save All to List
+              </Button>
+            </div>
           </div>
-        ) : (
-          <KeywordTable rows={rows} />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+        </div>
+      )}
 
-function KeywordTable({ rows }: { rows: KeywordBulkRow[] }) {
-  return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/30 hover:bg-muted/30">
-            <TableHead>Keyword</TableHead>
-            <TableHead className="text-right">Volume</TableHead>
-            <TableHead className="text-right">CPC</TableHead>
-            <TableHead className="text-center">KD</TableHead>
-            <TableHead>Intent</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row.keyword}>
-              <TableCell className="font-medium">{row.keyword}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatMetric(row.search_volume)}</TableCell>
-              <TableCell className="text-right tabular-nums">${row.cpc.toFixed(2)}</TableCell>
-              <TableCell className="text-center">
-                <KdBadge value={row.keyword_difficulty} />
-              </TableCell>
-              <TableCell>
-                <IntentBadge intent={row.intent} />
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
-
-function StrategySkeleton() {
-  return (
-    <div className="space-y-6">
-      {Array.from({ length: 3 }).map((_, sectionIndex) => (
-        <Card key={sectionIndex}>
-          <CardContent className="space-y-3 p-6">
-            <Skeleton className="h-6 w-48" />
-            {Array.from({ length: 5 }).map((_, rowIndex) => (
-              <Skeleton key={rowIndex} className="h-10 w-full" />
-            ))}
-          </CardContent>
-        </Card>
-      ))}
+      <SaveToListDialog
+        keywords={dialogKeywords}
+        open={saveDialogOpen}
+        onOpenChange={setSaveDialogOpen}
+      />
     </div>
   );
 }

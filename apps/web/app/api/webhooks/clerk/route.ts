@@ -50,49 +50,42 @@ export async function POST(req: Request) {
       const { id, name, slug } = event.data;
       const orgSlug = slug ?? id;
 
+      // Use Clerk's org ID directly as the DB primary key so the API's
+      // c.get("orgId") (which is the Clerk orgId) matches organizations.id
       await db
         .insert(organizations)
         .values({
-          id: createId(),
+          id,
           name,
           slug: orgSlug,
           plan: "starter",
         })
         .onConflictDoNothing();
 
-      // Create starter billing record
-      const [org] = await db
-        .select()
-        .from(organizations)
-        .where(eq(organizations.slug, orgSlug))
-        .limit(1);
-
-      if (org) {
-        await db
-          .insert(billing)
-          .values({
-            id: createId(),
-            orgId: org.id,
-            plan: "starter",
-            status: "active",
-          })
-          .onConflictDoNothing();
-      }
+      await db
+        .insert(billing)
+        .values({
+          id: createId(),
+          orgId: id,
+          plan: "starter",
+          status: "active",
+        })
+        .onConflictDoNothing();
       break;
     }
 
     case "organization.updated": {
-      const { id, name, slug } = event.data;
+      const { id, name } = event.data;
       await db
         .update(organizations)
         .set({ name, updatedAt: new Date() })
-        .where(eq(organizations.slug, (slug ?? id) as string));
+        .where(eq(organizations.id, id));
       break;
     }
 
     case "organization.deleted": {
       const { id } = event.data;
-      if (id) await db.delete(organizations).where(eq(organizations.slug, id));
+      if (id) await db.delete(organizations).where(eq(organizations.id, id));
       break;
     }
 
@@ -100,31 +93,23 @@ export async function POST(req: Request) {
       const { organization, public_user_data, role } = event.data;
       const clerkUserId = public_user_data.user_id;
       const email = public_user_data.identifier;
+      const clerkOrgId = organization.id;
+      const mappedRole =
+        role === "org:admin" ? "admin" : role === "org:editor" ? "editor" : "viewer";
 
-      const [org] = await db
-        .select()
-        .from(organizations)
-        .where(eq(organizations.slug, (organization.slug ?? organization.id) as string))
-        .limit(1);
-
-      if (org) {
-        const mappedRole =
-          role === "org:admin" ? "admin" : role === "org:editor" ? "editor" : "viewer";
-
-        await db
-          .insert(users)
-          .values({
-            id: createId(),
-            orgId: org.id,
-            clerkUserId,
-            email: email ?? "",
-            role: mappedRole,
-          })
-          .onConflictDoUpdate({
-            target: users.clerkUserId,
-            set: { orgId: org.id, role: mappedRole, updatedAt: new Date() },
-          });
-      }
+      await db
+        .insert(users)
+        .values({
+          id: createId(),
+          orgId: clerkOrgId,
+          clerkUserId,
+          email: email ?? "",
+          role: mappedRole,
+        })
+        .onConflictDoUpdate({
+          target: users.clerkUserId,
+          set: { orgId: clerkOrgId, role: mappedRole, updatedAt: new Date() },
+        });
       break;
     }
 

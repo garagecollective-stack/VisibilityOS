@@ -12,6 +12,8 @@ export interface KeywordRow {
   intent: string;
   monthly_searches: MonthlyPoint[];
   competition?: number | null;
+  competition_level?: string | null;
+  serp_item_types?: string[];
 }
 
 export interface KeywordOverviewResult {
@@ -31,21 +33,57 @@ export interface KeywordBulkResult {
   results: KeywordBulkRow[];
 }
 
-export interface StrategyGroup {
-  subtopic: string;
-  keywords: KeywordBulkRow[];
+export interface StrategyPillar {
+  keyword: string;
+  volume: number;
+  kd: number;
+  cpc: number;
+  rationale: string;
+}
+
+export interface StrategyClusterPillarPage {
+  keyword: string;
+  volume: number;
+  kd: number;
+  content_type: string;
+}
+
+export interface StrategySupportingKeyword {
+  keyword: string;
+  volume: number;
+  kd: number;
+  is_quick_win: boolean;
+}
+
+export interface StrategyCluster {
+  topic: string;
+  pillar_page: StrategyClusterPillarPage;
+  supporting_keywords: StrategySupportingKeyword[];
+}
+
+export interface StrategyCalendarItem {
+  week: number;
+  content_type: string;
+  keyword: string;
+  estimated_volume: number;
+  priority: "high" | "medium" | "low";
 }
 
 export interface KeywordStrategyResult {
-  pillarKeywords: KeywordBulkRow[];
-  supportingKeywords: StrategyGroup[];
-  quickWins: KeywordBulkRow[];
+  pillar: StrategyPillar;
+  clusters: StrategyCluster[];
+  content_calendar: StrategyCalendarItem[];
+  summary: string;
 }
 
 export interface KeywordListItem {
   id: string;
   keywordId: string;
   listId: string;
+  volume: number | null;
+  kd: number | null;
+  cpc: number | null;
+  intent: string | null;
   keyword: {
     id: string;
     keyword: string;
@@ -62,6 +100,7 @@ export interface KeywordListRecord {
   projectId: string;
   projectName: string;
   projectDomain: string;
+  lastEnrichedAt: string | null;
   createdAt: string;
   items: KeywordListItem[];
 }
@@ -77,11 +116,23 @@ export interface ProjectSummary {
 }
 
 export const KEYWORD_LOCATIONS = [
-  { label: "India", value: "2356" },
-  { label: "USA", value: "2840" },
-  { label: "UK", value: "2826" },
-  { label: "Global", value: "0" },
+  { label: "India", value: "2356", flag: "🇮🇳", code: "IN" },
+  { label: "United States", value: "2840", flag: "🇺🇸", code: "US" },
+  { label: "United Kingdom", value: "2826", flag: "🇬🇧", code: "GB" },
+  { label: "UAE", value: "9041", flag: "🇦🇪", code: "AE" },
+  { label: "Canada", value: "2124", flag: "🇨🇦", code: "CA" },
+  { label: "Australia", value: "2036", flag: "🇦🇺", code: "AU" },
+  { label: "Singapore", value: "2702", flag: "🇸🇬", code: "SG" },
 ] as const;
+
+export type LocationCode = (typeof KEYWORD_LOCATIONS)[number]["value"];
+
+export function locationByCountry(countryCode: string): (typeof KEYWORD_LOCATIONS)[number] {
+  return (
+    KEYWORD_LOCATIONS.find((location) => location.code === countryCode.toUpperCase()) ??
+    KEYWORD_LOCATIONS[0]
+  );
+}
 
 export function formatMetric(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -89,15 +140,4 @@ export function formatMetric(value: number): string {
   return value.toLocaleString();
 }
 
-export function downloadCsv(filename: string, rows: string[][]) {
-  const csv = rows
-    .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const href = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = href;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(href);
-}
+export { downloadCsv, exportKeywordsToCSV } from "./export-csv";

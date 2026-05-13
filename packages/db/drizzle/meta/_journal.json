@@ -8,6 +8,27 @@
       "when": 1777916895571,
       "tag": "0000_brief_thunderball",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778585770858,
+      "tag": "0001_premium_lockjaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778586295058,
+      "tag": "0002_tough_meggan",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778650217950,
+      "tag": "0003_shallow_gideon",
+      "breakpoints": true
     }
   ]
 }

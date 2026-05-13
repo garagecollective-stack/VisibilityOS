@@ -1,0 +1,1 @@
+ALTER TABLE "audit_runs" ADD COLUMN "failure_reason" text;

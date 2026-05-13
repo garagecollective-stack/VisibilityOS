@@ -4,11 +4,23 @@ import {
   integer,
   real,
   pgEnum,
+  jsonb,
   timestamp,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { projects } from "./projects.js";
 import { createId } from "../utils.js";
+
+export interface CrawledPageSummary {
+  url: string;
+  status_code: number;
+  title: string | null;
+  has_meta_desc: boolean;
+  has_h1: boolean;
+  word_count: number;
+  is_https: boolean;
+  issues_count: number;
+}
 
 export const auditStatusEnum = pgEnum("audit_status", [
   "pending",
@@ -44,6 +56,8 @@ export const auditRuns = pgTable("audit_runs", {
   notices: integer("notices").notNull().default(0),
   technicalScore: real("technical_score"),
   cwvScore: real("cwv_score"),
+  crawledPages: jsonb("crawled_pages").$type<CrawledPageSummary[]>().notNull().default([]),
+  failureReason: text("failure_reason"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
 });
@@ -64,6 +78,7 @@ export const auditIssues = pgTable("audit_issues", {
   severity: severityEnum("severity").notNull(),
   category: issueCategoryEnum("category").notNull(),
   url: text("url"),
+  affectedUrls: text("affected_urls").array().notNull().default([]),
   title: text("title").notNull(),
   description: text("description").notNull().default(""),
   recommendation: text("recommendation").notNull().default(""),
