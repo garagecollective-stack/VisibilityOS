@@ -25,6 +25,7 @@ import backlinksRouter from "./routes/backlinks.js";
 import competitorsRouter from "./routes/competitors.js";
 import geoRouter from "./routes/geo.js";
 import billingRouter, { razorpayWebhookHandler } from "./routes/billing.js";
+import dashboardRouter from "./routes/dashboard.js";
 
 const app = new Hono();
 
@@ -192,6 +193,7 @@ api.route("/backlinks", backlinksRouter);
 api.route("/competitors", competitorsRouter);
 api.route("/geo", geoRouter);
 api.route("/billing", billingRouter);
+api.route("/dashboard", dashboardRouter);
 
 app.route("/api", api);
 

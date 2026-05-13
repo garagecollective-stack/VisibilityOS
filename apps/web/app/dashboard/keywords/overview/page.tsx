@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   BarChart2,
   DollarSign,
+  MousePointerClick,
   Search,
   Target,
   TrendingUp,
@@ -22,6 +23,7 @@ import {
 import { CompetitionBadge } from "@/components/keywords/competition-badge";
 import { IntentBadge } from "@/components/keywords/intent-badge";
 import { KdBadge } from "@/components/keywords/kd-badge";
+import { KeywordClustersPanel } from "@/components/keywords/keyword-clusters-panel";
 import { KeywordVariationsTable } from "@/components/keywords/keyword-variations-table";
 import { PeopleAlsoAsk, type PaaQuestion } from "@/components/keywords/people-also-ask";
 import { SerpFeaturesGrid } from "@/components/keywords/serp-features-grid";
@@ -236,8 +238,8 @@ export default function KeywordOverviewPage() {
             <span className="capitalize">{device}</span>
           </div>
 
-          {/* 5 metric cards — Volume / CPC / KD / Intent / Competition */}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          {/* 6 metric cards — Volume / CPC / KD / Intent / Competition / Traffic Potential */}
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
             <MetricCard
               icon={<TrendingUp className="h-4 w-4" />}
               label="Search Volume"
@@ -267,6 +269,11 @@ export default function KeywordOverviewPage() {
                   level={results.main.competition_level}
                 />
               }
+            />
+            <MetricCard
+              icon={<MousePointerClick className="h-4 w-4" />}
+              label="Traffic Potential"
+              value={`${formatMetric(Math.round(results.main.search_volume * 0.28))} /mo`}
             />
           </div>
 
@@ -369,6 +376,11 @@ export default function KeywordOverviewPage() {
           {/* Step 5 — Keyword Variations (replaces old related-keywords table) */}
           <KeywordVariationsTable keywords={results.related} />
 
+          {/* Step 5B — Keyword Topic Clusters */}
+          {results.related.length > 0 && (
+            <KeywordClustersPanel keywords={results.related} />
+          )}
+
           {/* Slow SERP hint */}
           {serpQuery.isLoading && showSlowMessage && (
             <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-400">
@@ -424,8 +436,8 @@ function MetricCard({
 function OverviewSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, index) => (
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, index) => (
           <Card key={index}>
             <CardContent className="space-y-3 p-4">
               <Skeleton className="h-4 w-24" />

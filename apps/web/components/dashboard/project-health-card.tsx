@@ -12,16 +12,11 @@ interface Props {
   technicalScore: number | null;
   keywordsScore: number | null;
   backlinksScore: number | null;
+  contentScore?: number | null;
 }
 
-function overall(
-  technicalScore: number | null,
-  keywordsScore: number | null,
-  backlinksScore: number | null
-): number | null {
-  const values = [technicalScore, keywordsScore, backlinksScore].filter(
-    (v): v is number => v !== null
-  );
+function overall(scores: Array<number | null | undefined>): number | null {
+  const values = scores.filter((v): v is number => v != null);
   if (values.length === 0) return null;
   return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length);
 }
@@ -32,8 +27,9 @@ export function ProjectHealthCard({
   technicalScore,
   keywordsScore,
   backlinksScore,
+  contentScore,
 }: Props) {
-  const score = overall(technicalScore, keywordsScore, backlinksScore);
+  const score = overall([technicalScore, keywordsScore, backlinksScore, contentScore]);
   const sampleSubScore = keywordsScore === null || backlinksScore === null;
 
   return (
@@ -64,6 +60,7 @@ export function ProjectHealthCard({
           <MiniProgress label="Technical" value={technicalScore} />
           <MiniProgress label="Keywords" value={keywordsScore ?? 64} />
           <MiniProgress label="Backlinks" value={backlinksScore ?? 51} />
+          <MiniProgress label="Content" value={contentScore ?? null} />
         </div>
       </CardContent>
     </Card>

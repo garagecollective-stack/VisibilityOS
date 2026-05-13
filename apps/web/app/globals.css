@@ -70,3 +70,58 @@
 .animate-crawler-progress {
   animation: crawler-progress 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+
+@media print {
+  /* Hide everything by default */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Show only the audit content */
+  #audit-print-content,
+  #audit-print-content * {
+    visibility: visible;
+  }
+
+  /* Position audit content to fill the page */
+  #audit-print-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 20px;
+  }
+
+  /* Hide specific elements even inside print content */
+  .print-hide {
+    display: none !important;
+  }
+
+  /* Page breaks */
+  .print-page-break {
+    page-break-before: always;
+  }
+
+  /* Make tables more compact */
+  table {
+    font-size: 11px;
+  }
+
+  /* Remove shadows and ensure colours render */
+  * {
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Show all tab panels when printing */
+  body.printing [role="tabpanel"] {
+    display: block !important;
+    visibility: visible !important;
+  }
+
+  /* Prevent awkward page breaks inside sections */
+  body.printing .print-section {
+    page-break-inside: avoid;
+  }
+}

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   type ColumnDef,
   type SortingState,
@@ -24,6 +24,7 @@ import {
   ListFilter,
   Search,
   Star,
+  Target,
   X,
 } from "lucide-react";
 import { BulkSummaryBar } from "@/components/keywords/bulk-summary-bar";
@@ -36,7 +37,15 @@ import { CountrySelector } from "@/components/shared/country-selector";
 import { DeviceToggle, type Device } from "@/components/shared/device-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -56,7 +65,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { apiClient } from "@/lib/api";
 import { downloadCsv, exportKeywordsToCSV } from "@/lib/export-csv";
-import { formatMetric, type KeywordBulkResult, type KeywordBulkRow } from "@/lib/keywords";
+import { formatMetric, type KeywordBulkResult, type KeywordBulkRow, type ProjectSummary } from "@/lib/keywords";
 import { ssGet, ssParse, ssSet, ssStringify } from "@/lib/session-store";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +90,12 @@ function isOpportunity(row: KeywordBulkRow): boolean {
   return row.search_volume > 1_000 && (row.keyword_difficulty ?? 100) < 40;
 }
 
+function opportunityScore(volume: number, kd: number | null): number {
+  const kdVal = kd ?? 50;
+  const raw = (volume / 1000) * 0.4 + ((100 - kdVal) / 100) * 0.6 * 100;
+  return Math.min(100, Math.max(0, Math.round(raw)));
+}
+
 export default function KeywordBulkPage() {
   const { getToken } = useAuth();
   const [rawKeywords, setRawKeywords] = useState("");
@@ -101,6 +116,11 @@ export default function KeywordBulkPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [dialogKeywords, setDialogKeywords] = useState<string[]>([]);
+
+  // Track in rank tracker dialog
+  const [trackDialogOpen, setTrackDialogOpen] = useState(false);
+  const [trackProjectId, setTrackProjectId] = useState("");
+  const [trackKeywords, setTrackKeywords] = useState<string[]>([]);
 
   // Loading state animation
   const [loadingMsg, setLoadingMsg] = useState(0);
@@ -156,6 +176,32 @@ export default function KeywordBulkPage() {
       ssSet("lastBulkDevice", device);
       ssStringify("lastBulkResults", data);
     },
+  });
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects"],
+    queryFn: async () => {
+      const token = await getToken();
+      return apiClient<{ projects: ProjectSummary[] }>("/projects", { token: token ?? undefined });
+    },
+    enabled: trackDialogOpen,
+  });
+  const projects = projectsQuery.data?.projects ?? [];
+
+  const trackMutation = useMutation({
+    mutationFn: async () => {
+      const token = await getToken();
+      if (!trackProjectId) throw new Error("No project selected");
+      return apiClient<{ added: number; duplicates: number }>(
+        `/keywords/projects/${trackProjectId}/tracked`,
+        {
+          method: "POST",
+          body: JSON.stringify({ keywords: trackKeywords, locationCode: Number(location), languageCode: "en", device }),
+          token: token ?? undefined,
+        }
+      );
+    },
+    onSuccess: () => setTrackDialogOpen(false),
   });
 
   const isPending = bulkMutation.isPending;
@@ -487,9 +533,20 @@ export default function KeywordBulkPage() {
               {selected.size} keyword{selected.size === 1 ? "" : "s"} selected
             </span>
             <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setTrackKeywords(Array.from(selected));
+                  setTrackDialogOpen(true);
+                }}
+              >
+                <Target className="mr-1.5 h-3.5 w-3.5" />
+                Track in Rank Tracker
+              </Button>
               <Button size="sm" variant="outline" onClick={handleBulkExport}>
                 <Download className="mr-1.5 h-3.5 w-3.5" />
-                Export Selected CSV
+                Export CSV
               </Button>
               <Button size="sm" onClick={handleBulkSave}>
                 <Bookmark className="mr-1.5 h-3.5 w-3.5" />
@@ -507,6 +564,53 @@ export default function KeywordBulkPage() {
           </div>
         </div>
       )}
+
+      {/* ─── Track in Rank Tracker dialog ─── */}
+      <Dialog open={trackDialogOpen} onOpenChange={(open) => { setTrackDialogOpen(open); trackMutation.reset(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Track in Rank Tracker</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Add <span className="font-semibold text-foreground">{trackKeywords.length}</span>{" "}
+              selected keyword{trackKeywords.length === 1 ? "" : "s"} to the rank tracker. Duplicates are skipped.
+            </p>
+            <div className="space-y-2">
+              <Label>Project</Label>
+              <Select value={trackProjectId} onValueChange={setTrackProjectId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={projectsQuery.isLoading ? "Loading…" : "Select project"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {trackMutation.isError && (
+            <p className="text-sm text-destructive">
+              {trackMutation.error instanceof Error ? trackMutation.error.message : "Failed to track keywords."}
+            </p>
+          )}
+          {trackMutation.isSuccess && trackMutation.data && (
+            <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-900/40 dark:bg-green-950/30 dark:text-green-400">
+              Added {trackMutation.data.added} · {trackMutation.data.duplicates} duplicate{trackMutation.data.duplicates === 1 ? "" : "s"} skipped
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTrackDialogOpen(false)}>Close</Button>
+            <Button
+              onClick={() => trackMutation.mutate()}
+              disabled={!trackProjectId || trackKeywords.length === 0 || trackMutation.isPending}
+            >
+              {trackMutation.isPending ? "Adding…" : "Add to Rank Tracker"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <SaveToListDialog
         keywords={dialogKeywords}
@@ -660,6 +764,27 @@ function BulkResultsTable({
         header: "Intent",
         cell: ({ getValue }) => <IntentBadge intent={getValue<string>()} />,
         enableSorting: false,
+      },
+      {
+        id: "opp_score",
+        header: "Opp. Score",
+        cell: ({ row }) => {
+          const score = opportunityScore(row.original.search_volume, row.original.keyword_difficulty);
+          const cls =
+            score >= 70
+              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              : score >= 40
+              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+              : "bg-muted text-muted-foreground";
+          return (
+            <span className={cn("inline-flex items-center justify-center rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums min-w-[2.5rem]", cls)}>
+              {score}
+            </span>
+          );
+        },
+        sortingFn: (a, b) =>
+          opportunityScore(a.original.search_volume, a.original.keyword_difficulty) -
+          opportunityScore(b.original.search_volume, b.original.keyword_difficulty),
       },
     ];
     if (hasTrendData) {

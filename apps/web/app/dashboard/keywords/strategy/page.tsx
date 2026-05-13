@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Bookmark, Download, Layers, RotateCcw } from "lucide-react";
 import { SaveToListDialog } from "@/components/keywords/save-to-list-dialog";
 import { StrategyCalendar } from "@/components/keywords/strategy-calendar";
@@ -16,9 +16,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiClient } from "@/lib/api";
 import { downloadCsv } from "@/lib/export-csv";
-import type { KeywordStrategyResult } from "@/lib/keywords";
+import type { KeywordStrategyResult, ProjectSummary } from "@/lib/keywords";
 import { ssGet, ssParse, ssSet, ssStringify } from "@/lib/session-store";
 
 interface StrategyInputs {
@@ -83,6 +90,40 @@ export default function KeywordStrategyPage() {
   });
 
   const isPending = strategyMutation.isPending;
+
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects"],
+    queryFn: async () => {
+      const token = await getToken();
+      return apiClient<{ projects: ProjectSummary[] }>("/projects", { token: token ?? undefined });
+    },
+  });
+  const projects = projectsQuery.data?.projects ?? [];
+
+  useEffect(() => {
+    if (projects.length > 0 && selectedProjectId === null) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects, selectedProjectId]);
+
+  const trackedKwsQuery = useQuery({
+    queryKey: ["tracked-keywords", selectedProjectId],
+    queryFn: async () => {
+      const token = await getToken();
+      return apiClient<{ keywords: Array<{ keyword: string }> }>(
+        `/keywords/projects/${selectedProjectId}/tracked`,
+        { token: token ?? undefined }
+      );
+    },
+    enabled: !!selectedProjectId,
+  });
+
+  const trackedSet = useMemo(() => {
+    const kws = trackedKwsQuery.data?.keywords ?? [];
+    return new Set(kws.map((k) => k.keyword));
+  }, [trackedKwsQuery.data]);
 
   const handleBuild = () => {
     if (!topic.trim()) return;
@@ -250,6 +291,23 @@ export default function KeywordStrategyPage() {
                   {results.clusters.length} clusters · expand any group to see its supporting keywords
                 </p>
               </div>
+              {projects.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Tracking vs.</span>
+                  <Select value={selectedProjectId ?? ""} onValueChange={setSelectedProjectId}>
+                    <SelectTrigger className="h-7 w-[160px] text-xs">
+                      <SelectValue placeholder="Select project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projects.map((p) => (
+                        <SelectItem key={p.id} value={p.id} className="text-xs">
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             <div className="space-y-3">
               {results.clusters.map((cluster, i) => (
@@ -259,6 +317,7 @@ export default function KeywordStrategyPage() {
                   defaultOpen
                   onSaveKeyword={(kw) => openSave([kw])}
                   onSaveCluster={(kws) => openSave(kws)}
+                  trackedKeywords={trackedSet}
                 />
               ))}
             </div>
