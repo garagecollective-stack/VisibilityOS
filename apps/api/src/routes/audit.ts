@@ -9,9 +9,11 @@ import { createId } from "@garage-seo/db";
 import {
   runAuditRules,
   extractPageSpeed,
+  checkWwwResolve,
+  type AuditIssue,
   type CrawlResult,
 } from "../lib/audit-rules.js";
-import type { CrawledPageSummary } from "@garage-seo/db";
+import type { CrawledPageSummary, AiCrawlerAccess, RawMetricsJson } from "@garage-seo/db";
 
 const router = new Hono();
 
@@ -125,6 +127,7 @@ router.get("/results/:auditRunId", async (c) => {
           | "security"
           | "indexing"
           | "cwv"
+          | "ai_search"
       )
     );
   }
@@ -145,7 +148,23 @@ router.get("/results/:auditRunId", async (c) => {
     {}
   );
 
-  return c.json({ run, issues, grouped });
+  // Pages breakdown
+  const crawledPages = (run.crawledPages as CrawledPageSummary[]) ?? [];
+  const noindexUrls = new Set(
+    issues
+      .filter((i) => i.category === "indexing" && i.title.toLowerCase().includes("noindex"))
+      .flatMap((i) => i.affectedUrls as string[])
+  );
+  const pagesBreakdown = {
+    total: crawledPages.length,
+    healthy: crawledPages.filter((p) => p.status_code === 200 && p.issues_count === 0).length,
+    has_issues: crawledPages.filter((p) => p.status_code === 200 && p.issues_count > 0).length,
+    broken: crawledPages.filter((p) => p.status_code === 404 || p.status_code >= 500).length,
+    redirects: crawledPages.filter((p) => p.status_code === 301 || p.status_code === 302).length,
+    blocked: crawledPages.filter((p) => noindexUrls.has(p.url)).length,
+  };
+
+  return c.json({ run, issues, grouped, pages_breakdown: pagesBreakdown });
 });
 
 // ── GET /status/:auditRunId ──────────────────────────────────────────────────
@@ -169,6 +188,92 @@ router.get("/status/:auditRunId", async (c) => {
     pagesCrawled: run.pagesCrawled,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
+  });
+});
+
+// ── GET /compare/:projectId ──────────────────────────────────────────────────
+
+router.get("/compare/:projectId", async (c) => {
+  const orgId = c.get("orgId");
+  const db = getDb();
+  const { projectId } = c.req.param();
+  const { run1, run2 } = c.req.query();
+
+  if (!run1 || !run2) {
+    return c.json({ error: "run1 and run2 query params are required" }, 400);
+  }
+
+  const project = await db.query.projects.findFirst({
+    where: and(eq(projects.id, projectId), eq(projects.orgId, orgId)),
+  });
+  if (!project) return c.json({ error: "Project not found" }, 404);
+
+  const [r1, r2] = await Promise.all([
+    db.query.auditRuns.findFirst({ where: eq(auditRuns.id, run1) }),
+    db.query.auditRuns.findFirst({ where: eq(auditRuns.id, run2) }),
+  ]);
+
+  if (!r1 || r1.projectId !== projectId) return c.json({ error: "run1 not found" }, 404);
+  if (!r2 || r2.projectId !== projectId) return c.json({ error: "run2 not found" }, 404);
+
+  const m1 = (r1.rawMetricsJson as RawMetricsJson) ?? {};
+  const m2 = (r2.rawMetricsJson as RawMetricsJson) ?? {};
+
+  const metricKeys: (keyof RawMetricsJson)[] = [
+    "pages_crawled", "site_health_score", "total_issues", "total_errors",
+    "total_warnings", "total_notices", "meta_errors", "meta_warnings",
+    "links_errors", "links_warnings", "speed_warnings", "content_warnings",
+    "schema_notices", "mobile_errors", "security_errors", "indexing_warnings",
+    "cwv_failures", "ai_search_issues",
+  ];
+
+  const diff: Record<string, { before: number; after: number; delta: number; improved: boolean }> = {};
+  for (const key of metricKeys) {
+    const before = (m1[key] as number | undefined) ?? 0;
+    const after = (m2[key] as number | undefined) ?? 0;
+    const delta = after - before;
+    // For scores, higher is better; for issue counts, lower is better
+    const isScore = key === "site_health_score";
+    diff[key] = { before, after, delta, improved: isScore ? delta > 0 : delta < 0 };
+  }
+
+  return c.json({
+    run1: { id: r1.id, date: r1.startedAt, score: r1.technicalScore, metrics: m1 },
+    run2: { id: r2.id, date: r2.startedAt, score: r2.technicalScore, metrics: m2 },
+    diff,
+  });
+});
+
+// ── GET /progress/:projectId ─────────────────────────────────────────────────
+
+router.get("/progress/:projectId", async (c) => {
+  const orgId = c.get("orgId");
+  const db = getDb();
+  const { projectId } = c.req.param();
+
+  const project = await db.query.projects.findFirst({
+    where: and(eq(projects.id, projectId), eq(projects.orgId, orgId)),
+  });
+  if (!project) return c.json({ error: "Project not found" }, 404);
+
+  const runs = await db
+    .select()
+    .from(auditRuns)
+    .where(and(eq(auditRuns.projectId, projectId), eq(auditRuns.status, "completed")))
+    .orderBy(auditRuns.startedAt)
+    .limit(50);
+
+  return c.json({
+    data: runs.map((r) => ({
+      id: r.id,
+      createdAt: r.startedAt,
+      healthScore: r.technicalScore ?? 0,
+      totalIssues: r.totalIssues,
+      criticalIssues: r.criticalIssues,
+      warnings: r.warnings,
+      notices: r.notices,
+      pagesCrawled: r.pagesCrawled,
+    })),
   });
 });
 
@@ -255,9 +360,182 @@ async function runAuditBackground(auditRunId: string, domain: string): Promise<v
     const report = runAuditRules(crawlData, pageSpeedResult);
     console.log(`[audit] rules done — score: ${report.healthScore}, issues: ${report.issues.length} (${report.criticalCount} critical, ${report.warningCount} warning, ${report.noticeCount} notice)`);
 
+    // 3b. Site-level checks (www resolve, llms.txt, robots.txt AI bots)
+    const siteIssues: AuditIssue[] = [];
+    const aiCrawlerAccess: AiCrawlerAccess = {};
+
+    // WWW resolve check
+    const wwwIssue = await checkWwwResolve(domain).catch(() => null);
+    if (wwwIssue) siteIssues.push(wwwIssue);
+
+    // llms.txt check
+    let llmsTxtFound = false;
+    try {
+      const llmsRes = await fetch(`https://${domain}/llms.txt`, {
+        signal: AbortSignal.timeout(5000),
+        redirect: "follow",
+      });
+      if (llmsRes.status === 404) {
+        siteIssues.push({
+          severity: "notice",
+          category: "ai_search",
+          url: null,
+          affectedUrls: [],
+          title: "llms.txt Not Found",
+          description: "llms.txt is the emerging standard for telling AI crawlers what content to index.",
+          recommendation: "Create /llms.txt — see https://llmstxt.org",
+          affectedCount: 0,
+        });
+      } else if (llmsRes.ok) {
+        const text = await llmsRes.text().catch(() => "");
+        llmsTxtFound = true;
+        if (!text.includes("# ")) {
+          siteIssues.push({
+            severity: "notice",
+            category: "ai_search",
+            url: null,
+            affectedUrls: [],
+            title: "llms.txt Has Formatting Issues",
+            description: "The llms.txt file was found but does not contain a required # heading.",
+            recommendation: "Add a # heading at the top of /llms.txt as required by the spec — see https://llmstxt.org",
+            affectedCount: 0,
+          });
+        }
+      }
+    } catch {
+      // Non-fatal — skip
+    }
+
+    // robots.txt AI bot detection
+    const AI_BOTS: Array<{ agent: string; key: keyof AiCrawlerAccess }> = [
+      { agent: "ChatGPT-User", key: "chatgpt_user" },
+      { agent: "OAI-SearchBot", key: "oai_searchbot" },
+      { agent: "GPTBot", key: "gptbot" },
+      { agent: "Google-Extended", key: "google_extended" },
+      { agent: "PerplexityBot", key: "perplexitybot" },
+      { agent: "ClaudeBot", key: "claudebot" },
+    ];
+    for (const bot of AI_BOTS) aiCrawlerAccess[bot.key] = "unknown";
+
+    try {
+      const robotsRes = await fetch(`https://${domain}/robots.txt`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (robotsRes.status === 404) {
+        siteIssues.push({
+          severity: "notice",
+          category: "indexing",
+          url: null,
+          affectedUrls: [],
+          title: "robots.txt Not Found",
+          description: "No robots.txt file was found at the root of your domain.",
+          recommendation: "Create a robots.txt file to guide crawler access to your site.",
+          affectedCount: 0,
+        });
+      } else if (robotsRes.ok) {
+        const robotsTxt = await robotsRes.text();
+
+        // W22: Check for Sitemap directive
+        if (!robotsTxt.toLowerCase().includes("sitemap:")) {
+          siteIssues.push({
+            severity: "warning",
+            category: "indexing",
+            url: null,
+            affectedUrls: [],
+            title: "Sitemap Not Referenced in robots.txt",
+            description: "Your robots.txt file exists but does not include a Sitemap: directive.",
+            recommendation: `Add 'Sitemap: https://${domain}/sitemap.xml' to your robots.txt file so crawlers can discover your sitemap.`,
+            affectedCount: 0,
+          });
+        }
+
+        const lines = robotsTxt.split("\n").map((l) => l.trim());
+
+        let currentAgents: string[] = [];
+        for (const line of lines) {
+          const lower = line.toLowerCase();
+          if (lower.startsWith("user-agent:")) {
+            const agent = line.slice("user-agent:".length).trim();
+            currentAgents.push(agent);
+          } else if (lower.startsWith("disallow:") || lower.startsWith("allow:")) {
+            const isDisallow = lower.startsWith("disallow:");
+            const path = line.slice(line.indexOf(":") + 1).trim();
+
+            for (const bot of AI_BOTS) {
+              const matchesAgent = currentAgents.some(
+                (a) => a === "*" || a.toLowerCase() === bot.agent.toLowerCase()
+              );
+              if (matchesAgent && path === "/") {
+                aiCrawlerAccess[bot.key] = isDisallow ? "blocked" : "allowed";
+              } else if (matchesAgent && !isDisallow && aiCrawlerAccess[bot.key] === "unknown") {
+                aiCrawlerAccess[bot.key] = "allowed";
+              }
+            }
+          } else if (line === "") {
+            currentAgents = [];
+          }
+        }
+
+        // Any bot still "unknown" after parsing and not "*" blocked → treat as allowed
+        for (const bot of AI_BOTS) {
+          if (aiCrawlerAccess[bot.key] === "unknown") {
+            aiCrawlerAccess[bot.key] = "allowed";
+          }
+        }
+
+        // Generate issues for blocked bots
+        for (const bot of AI_BOTS) {
+          if (aiCrawlerAccess[bot.key] === "blocked") {
+            siteIssues.push({
+              severity: "warning",
+              category: "ai_search",
+              url: null,
+              affectedUrls: [],
+              title: `${bot.agent} Is Blocked From Crawling`,
+              description: `${bot.agent} is blocked by robots.txt. This prevents this AI crawler from indexing your content.`,
+              recommendation: `Remove the Disallow: / rule for ${bot.agent} in robots.txt to allow AI search indexing.`,
+              affectedCount: 0,
+            });
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — skip
+    }
+
+    // W23: Check that sitemap.xml or sitemap_index.xml exists
+    try {
+      const [sitemapRes, sitemapIdxRes] = await Promise.allSettled([
+        fetch(`https://${domain}/sitemap.xml`, { signal: AbortSignal.timeout(5000) }),
+        fetch(`https://${domain}/sitemap_index.xml`, { signal: AbortSignal.timeout(5000) }),
+      ]);
+      const sitemapOk = sitemapRes.status === "fulfilled" && sitemapRes.value.ok;
+      const sitemapIdxOk = sitemapIdxRes.status === "fulfilled" && sitemapIdxRes.value.ok;
+      if (!sitemapOk && !sitemapIdxOk) {
+        siteIssues.push({
+          severity: "warning",
+          category: "indexing",
+          url: null,
+          affectedUrls: [],
+          title: "sitemap.xml Not Found",
+          description: "Neither /sitemap.xml nor /sitemap_index.xml returned a valid response.",
+          recommendation: "Create and submit a sitemap to help search engines discover all your pages.",
+          affectedCount: 0,
+        });
+      }
+    } catch {
+      // Non-fatal — skip
+    }
+
+    const allIssues = [...report.issues, ...siteIssues];
+    const allCriticalCount = allIssues.filter((i) => i.severity === "critical").length;
+    const allWarningCount = allIssues.filter((i) => i.severity === "warning").length;
+    const allNoticeCount = allIssues.filter((i) => i.severity === "notice").length;
+    console.log(`[audit] site checks done — ${siteIssues.length} additional issues, llms.txt: ${llmsTxtFound}`);
+
     // 4. Build per-page issue counts for the crawled_pages summary
     const issueCountByUrl = new Map<string, number>();
-    for (const issue of report.issues) {
+    for (const issue of allIssues) {
       for (const url of issue.affectedUrls) {
         issueCountByUrl.set(url, (issueCountByUrl.get(url) ?? 0) + 1);
       }
@@ -272,16 +550,19 @@ async function runAuditBackground(auditRunId: string, domain: string): Promise<v
       word_count: page.word_count ?? 0,
       is_https: page.is_https ?? false,
       issues_count: issueCountByUrl.get(page.url) ?? 0,
+      has_json_ld: page.has_json_ld ?? false,
+      has_canonical: !!page.canonical,
+      incoming_links_count: report.incomingLinksCount.get(page.url) ?? 0,
     }));
 
     // 5. Persist issues with all affected URLs
-    if (report.issues.length > 0) {
+    if (allIssues.length > 0) {
       await db.insert(auditIssues).values(
-        report.issues.map((issue) => ({
+        allIssues.map((issue) => ({
           id: createId(),
           runId: auditRunId,
           severity: issue.severity,
-          category: issue.category,
+          category: issue.category as "meta" | "links" | "speed" | "content" | "schema" | "mobile" | "security" | "indexing" | "cwv" | "ai_search",
           url: issue.url,
           affectedUrls: issue.affectedUrls,
           title: issue.title,
@@ -292,19 +573,48 @@ async function runAuditBackground(auditRunId: string, domain: string): Promise<v
       );
     }
 
+    // Build raw metrics for comparison
+    const rawMetrics: RawMetricsJson = {
+      pages_crawled: report.pagesCrawled,
+      site_health_score: report.healthScore,
+      total_issues: allIssues.length,
+      total_errors: allCriticalCount,
+      total_warnings: allWarningCount,
+      total_notices: allNoticeCount,
+      meta_errors: allIssues.filter((i) => i.category === "meta" && i.severity === "critical").length,
+      meta_warnings: allIssues.filter((i) => i.category === "meta" && i.severity === "warning").length,
+      links_errors: allIssues.filter((i) => i.category === "links" && i.severity === "critical").length,
+      links_warnings: allIssues.filter((i) => i.category === "links" && i.severity === "warning").length,
+      speed_warnings: allIssues.filter((i) => i.category === "speed" && i.severity === "warning").length,
+      content_warnings: allIssues.filter((i) => i.category === "content" && i.severity === "warning").length,
+      schema_notices: allIssues.filter((i) => i.category === "schema" && i.severity === "notice").length,
+      mobile_errors: allIssues.filter((i) => i.category === "mobile" && i.severity === "critical").length,
+      security_errors: allIssues.filter((i) => i.category === "security" && i.severity === "critical").length,
+      indexing_warnings: allIssues.filter((i) => i.category === "indexing" && i.severity === "warning").length,
+      cwv_failures: allIssues.filter((i) => i.category === "cwv").length,
+      ai_search_issues: siteIssues.filter((i) => i.category === "ai_search").length,
+      ai_search_score: Math.max(
+        0,
+        Math.min(100, 100 - allIssues.filter((i) => i.category === "ai_search").length * 15)
+      ),
+      llms_txt_found: llmsTxtFound,
+    };
+
     // 6. Mark completed (with per-page summary)
     await db
       .update(auditRuns)
       .set({
         status: "completed",
         pagesCrawled: report.pagesCrawled,
-        totalIssues: report.issues.length,
-        criticalIssues: report.criticalCount,
-        warnings: report.warningCount,
-        notices: report.noticeCount,
+        totalIssues: allIssues.length,
+        criticalIssues: allCriticalCount,
+        warnings: allWarningCount,
+        notices: allNoticeCount,
         technicalScore: report.healthScore,
         cwvScore: report.cwvScore,
         crawledPages: crawledPagesSummary,
+        aiCrawlerAccess: aiCrawlerAccess,
+        rawMetricsJson: rawMetrics,
         completedAt: new Date(),
       })
       .where(eq(auditRuns.id, auditRunId));

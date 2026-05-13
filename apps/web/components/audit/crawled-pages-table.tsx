@@ -60,15 +60,19 @@ export interface CrawledPage {
   word_count: number;
   is_https: boolean;
   issues_count: number;
+  has_json_ld?: boolean;
+  has_canonical?: boolean;
+  incoming_links_count?: number;
 }
 
 type StatusBucket = "all" | "2xx" | "3xx" | "4xx" | "5xx";
 
 interface Props {
   pages: CrawledPage[];
+  blockedAiUrls?: Set<string>;
 }
 
-export function CrawledPagesTable({ pages }: Props) {
+export function CrawledPagesTable({ pages, blockedAiUrls }: Props) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [statusBucket, setStatusBucket] = useState<StatusBucket>("all");
@@ -167,8 +171,50 @@ export function CrawledPagesTable({ pages }: Props) {
         },
         sortingFn: "basic",
       },
+      {
+        id: "crawl_depth",
+        accessorFn: (row) => {
+          try {
+            return new URL(row.url).pathname.split("/").filter(Boolean).length;
+          } catch {
+            return 0;
+          }
+        },
+        header: "Depth",
+        cell: ({ getValue }) => {
+          const depth = getValue<number>();
+          const label =
+            depth <= 1
+              ? "1 level"
+              : depth === 2
+              ? "2 levels"
+              : depth === 3
+              ? "3 levels"
+              : "4+ levels";
+          const cls =
+            depth <= 2
+              ? "text-green-600 dark:text-green-400"
+              : depth === 3
+              ? "text-yellow-600 dark:text-yellow-400"
+              : "text-red-600 dark:text-red-400";
+          return <span className={cn("text-xs font-medium", cls)}>{label}</span>;
+        },
+        sortingFn: "basic",
+      },
+      {
+        id: "ai_access",
+        accessorFn: (row) => (blockedAiUrls?.has(row.url) ? 1 : 0),
+        header: "AI Access",
+        cell: ({ row }) =>
+          blockedAiUrls?.has(row.original.url) ? (
+            <span className="text-xs font-medium text-red-600 dark:text-red-400">🤖 Blocked</span>
+          ) : (
+            <span className="text-xs text-muted-foreground">✅ OK</span>
+          ),
+        sortingFn: "basic",
+      },
     ],
-    []
+    [blockedAiUrls]
   );
 
   const table = useReactTable({
@@ -187,17 +233,23 @@ export function CrawledPagesTable({ pages }: Props) {
 
   const handleExport = () => {
     const rows: string[][] = [
-      ["URL", "Status Code", "Title", "Has Meta Description", "Has H1", "Word Count", "HTTPS", "Issues"],
-      ...pages.map((p) => [
-        p.url,
-        String(p.status_code),
-        p.title ?? "",
-        p.has_meta_desc ? "yes" : "no",
-        p.has_h1 ? "yes" : "no",
-        String(p.word_count),
-        p.is_https ? "yes" : "no",
-        String(p.issues_count),
-      ]),
+      ["URL", "Status Code", "Title", "Has Meta Description", "Has H1", "Word Count", "HTTPS", "Issues", "AI Access"],
+      ...pages.map((p) => {
+        let depth = 0;
+        try { depth = new URL(p.url).pathname.split("/").filter(Boolean).length; } catch { /* */ }
+        return [
+          p.url,
+          String(p.status_code),
+          p.title ?? "",
+          p.has_meta_desc ? "yes" : "no",
+          p.has_h1 ? "yes" : "no",
+          String(p.word_count),
+          p.is_https ? "yes" : "no",
+          String(p.issues_count),
+          depth <= 1 ? "1 level" : depth === 2 ? "2 levels" : depth === 3 ? "3 levels" : "4+ levels",
+          blockedAiUrls?.has(p.url) ? "Blocked" : "OK",
+        ];
+      }),
     ];
     downloadCsv("crawled-pages.csv", rows);
   };

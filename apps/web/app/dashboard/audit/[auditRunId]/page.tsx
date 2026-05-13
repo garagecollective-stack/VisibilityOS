@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MetricCard } from "@/components/shared/metric-card";
 import { ScoreBreakdown } from "@/components/audit/score-breakdown";
 import { IssuesList, type IssueRow } from "@/components/audit/issues-list";
@@ -25,6 +26,14 @@ import {
   CrawledPagesTable,
   type CrawledPage,
 } from "@/components/audit/crawled-pages-table";
+import {
+  PagesBreakdownChips,
+  type PagesBreakdown,
+} from "@/components/audit/pages-breakdown-chips";
+import { AiSearchVisibilityCard, type AiCrawlerAccess } from "@/components/audit/ai-search-visibility";
+import { StatisticsTab } from "@/components/audit/statistics-tab";
+import { CompareTab } from "@/components/audit/compare-tab";
+import { ProgressTab } from "@/components/audit/progress-tab";
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -40,13 +49,19 @@ type AuditRun = {
   technicalScore: number | null;
   cwvScore: number | null;
   crawledPages: CrawledPage[];
+  aiCrawlerAccess?: AiCrawlerAccess | null;
+  rawMetricsJson?: Record<string, unknown> | null;
   failureReason: string | null;
   startedAt: string;
   completedAt: string | null;
   project: { id: string; name: string; domain: string };
 };
 
-type ResultsData = { run: AuditRun; issues: IssueRow[] };
+type ResultsData = {
+  run: AuditRun;
+  issues: IssueRow[];
+  pages_breakdown?: PagesBreakdown;
+};
 
 export default function AuditResultsPage() {
   const { getToken } = useAuth();
@@ -104,20 +119,70 @@ export default function AuditResultsPage() {
     );
   }
 
-  const { run, issues } = resultsQuery.data;
+  const { run, issues, pages_breakdown } = resultsQuery.data;
   const score = run.technicalScore ?? 0;
   const duration = run.completedAt ? formatDuration(run.startedAt, run.completedAt) : "—";
+  const scoreLabel = score >= 90 ? "Excellent" : score >= 70 ? "Good" : score >= 50 ? "Needs Work" : "Critical";
+  const formattedDate = new Date(run.startedAt).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  // Detect whether this audit actually ran the AI checks.
+  // New audits always have at least one key set in aiCrawlerAccess;
+  // old audits have the column default of {}.
+  const hasAiData = Object.keys(run.aiCrawlerAccess ?? {}).length > 0;
+
+  // Only derive llms.txt status when AI checks ran; otherwise show "Not checked".
+  const llmsTxtFound: boolean | undefined = hasAiData
+    ? !issues.some((i) => i.category === "ai_search" && i.title === "llms.txt Not Found")
+    : undefined;
+  const llmsTxtHasIssues = issues.some(
+    (i) => i.category === "ai_search" && i.title.toLowerCase().includes("formatting")
+  );
+
+  const rawMetrics = run.rawMetricsJson as { ai_search_score?: number } | null;
+  const aiSearchScore: number | null = rawMetrics?.ai_search_score ?? null;
+
+  // Derive per-page AI blocked set from warning/critical ai_search issues
+  const blockedAiUrls = new Set<string>();
+  for (const issue of issues) {
+    if (
+      issue.category === "ai_search" &&
+      (issue.severity === "warning" || issue.severity === "critical")
+    ) {
+      for (const url of (issue.affectedUrls as string[])) {
+        blockedAiUrls.add(url);
+      }
+    }
+  }
+
+  const handleExportPdf = () => {
+    const originalTitle = document.title;
+    document.title = `Site Audit — ${run.project.domain} — ${formattedDate}`;
+    document.body.classList.add("printing");
+
+    const cleanup = () => {
+      document.title = originalTitle;
+      document.body.classList.remove("printing");
+      window.removeEventListener("afterprint", cleanup);
+    };
+
+    window.addEventListener("afterprint", cleanup);
+    window.print();
+  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6 print:max-w-none print:p-0">
-      {/* Top bar */}
+      {/* Top bar — hidden in print */}
       <div className="flex items-center justify-between gap-3 print:hidden">
         <BackButton />
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => window.print()}
+            onClick={handleExportPdf}
           >
             <Printer className="mr-1.5 h-3.5 w-3.5" />
             Export PDF
@@ -150,82 +215,143 @@ export default function AuditResultsPage() {
         </div>
       )}
 
-      {/* Health score + summary cards */}
-      <div className="grid gap-6 md:grid-cols-[180px_1fr]">
-        <div className="flex flex-col items-center gap-2">
-          <HealthScoreCircle score={score} />
-          <ScoreBandLabel score={score} />
-          <p className="text-xs text-muted-foreground">Overall Score</p>
+      {/* ── Everything inside this div is what gets printed ── */}
+      <div id="audit-print-content">
+
+        {/* Print-only header — hidden on screen, visible in PDF */}
+        <div className="hidden print:block mb-6 pb-4 border-b border-gray-200">
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Site Audit Report</h1>
+              <p className="text-gray-500 mt-1 text-sm">
+                {run.project.domain} · {formattedDate} · {run.pagesCrawled.toLocaleString()} pages crawled
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-3xl font-bold text-gray-900">{score}<span className="text-lg font-normal text-gray-400">/100</span></p>
+              <p className="text-sm text-gray-500 mt-0.5">{scoreLabel}</p>
+            </div>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <MetricCard
-            label="Total Issues"
-            value={run.totalIssues}
-            icon={<AlertTriangle className="h-4 w-4" />}
-            accent="default"
-          />
-          <MetricCard
-            label="Critical"
-            value={run.criticalIssues}
-            icon={<XCircle className="h-4 w-4" />}
-            accent="red"
-          />
-          <MetricCard
-            label="Warnings"
-            value={run.warnings}
-            icon={<AlertTriangle className="h-4 w-4" />}
-            accent="yellow"
-          />
-          <MetricCard
-            label="Notices"
-            value={run.notices}
-            icon={<Info className="h-4 w-4" />}
-            accent="blue"
-          />
+
+        {/* Health score + summary cards */}
+        <div className="print-section grid gap-6 md:grid-cols-[180px_1fr]">
+          <div className="flex flex-col items-center gap-2">
+            <HealthScoreCircle score={score} />
+            <ScoreBandLabel score={score} />
+            <p className="text-xs text-muted-foreground">Overall Score</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <MetricCard
+              label="Total Issues"
+              value={run.totalIssues}
+              icon={<AlertTriangle className="h-4 w-4" />}
+              accent="default"
+            />
+            <MetricCard
+              label="Critical"
+              value={run.criticalIssues}
+              icon={<XCircle className="h-4 w-4" />}
+              accent="red"
+            />
+            <MetricCard
+              label="Warnings"
+              value={run.warnings}
+              icon={<AlertTriangle className="h-4 w-4" />}
+              accent="yellow"
+            />
+            <MetricCard
+              label="Notices"
+              value={run.notices}
+              icon={<Info className="h-4 w-4" />}
+              accent="blue"
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Metadata row */}
-      <Card>
-        <CardContent className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
-          <MetaItem
-            icon={<FileSearch className="h-4 w-4" />}
-            label="Pages Crawled"
-            value={run.pagesCrawled.toLocaleString()}
-          />
-          <MetaItem
-            icon={<Timer className="h-4 w-4" />}
-            label="Duration"
-            value={duration}
-          />
-          <MetaItem
-            icon={<CalendarDays className="h-4 w-4" />}
-            label="Date"
-            value={new Date(run.startedAt).toLocaleDateString("en-IN", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-            })}
-          />
-          <MetaItem
-            icon={<StatusDot status={run.status} />}
-            label="Status"
-            value={titleCase(run.status)}
-          />
-        </CardContent>
-      </Card>
+        {/* Pages breakdown chips */}
+        {pages_breakdown && pages_breakdown.total > 0 && (
+          <PagesBreakdownChips breakdown={pages_breakdown} />
+        )}
 
-      {/* Score breakdown */}
-      <ScoreBreakdown issues={issues} />
+        {/* Metadata row */}
+        <Card className="print-section">
+          <CardContent className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
+            <MetaItem
+              icon={<FileSearch className="h-4 w-4" />}
+              label="Pages Crawled"
+              value={run.pagesCrawled.toLocaleString()}
+            />
+            <MetaItem
+              icon={<Timer className="h-4 w-4" />}
+              label="Duration"
+              value={duration}
+            />
+            <MetaItem
+              icon={<CalendarDays className="h-4 w-4" />}
+              label="Date"
+              value={formattedDate}
+            />
+            <MetaItem
+              icon={<StatusDot status={run.status} />}
+              label="Status"
+              value={titleCase(run.status)}
+            />
+          </CardContent>
+        </Card>
 
-      {/* Core Web Vitals */}
-      <CoreWebVitalsCard issues={issues} cwvScore={run.cwvScore} />
+        {/* Tabs */}
+        <Tabs defaultValue="overview" className="space-y-5">
+          {/* Tab navigation — hidden in print */}
+          <TabsList className="print-hide">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="statistics">Statistics</TabsTrigger>
+            <TabsTrigger value="progress">Progress</TabsTrigger>
+            <TabsTrigger value="compare">Compare</TabsTrigger>
+          </TabsList>
 
-      {/* Issues */}
-      <IssuesList issues={issues} />
+          {/* Overview tab */}
+          <TabsContent value="overview" className="space-y-6">
+            <div className="print-section">
+              <ScoreBreakdown issues={issues} />
+            </div>
+            <div className="print-section">
+              <CoreWebVitalsCard issues={issues} cwvScore={run.cwvScore} />
+            </div>
+            <div className="print-section">
+              <AiSearchVisibilityCard
+                aiCrawlerAccess={run.aiCrawlerAccess}
+                llmsTxtFound={llmsTxtFound}
+                llmsTxtHasIssues={llmsTxtHasIssues}
+                aiSearchScore={aiSearchScore}
+              />
+            </div>
+            <div className="print-section">
+              <IssuesList issues={issues} />
+            </div>
+            {/* Crawled pages table — too large for PDF */}
+            <div className="print-hide">
+              <CrawledPagesTable pages={run.crawledPages ?? []} blockedAiUrls={blockedAiUrls} />
+            </div>
+          </TabsContent>
 
-      {/* Crawled pages */}
-      <CrawledPagesTable pages={run.crawledPages ?? []} />
+          {/* Statistics tab */}
+          <TabsContent value="statistics" className="print-page-break">
+            <StatisticsTab pages={run.crawledPages ?? []} issues={issues} />
+          </TabsContent>
+
+          {/* Progress tab — historical line chart + run table */}
+          <TabsContent value="progress" className="print-hide">
+            <ProgressTab projectId={run.projectId} currentRunId={run.id} />
+          </TabsContent>
+
+          {/* Compare tab — not meaningful in a PDF snapshot */}
+          <TabsContent value="compare" className="print-hide">
+            <CompareTab projectId={run.projectId} currentRunId={run.id} />
+          </TabsContent>
+        </Tabs>
+
+      </div>{/* end #audit-print-content */}
     </div>
   );
 }

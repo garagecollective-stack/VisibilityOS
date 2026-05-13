@@ -12,7 +12,8 @@ type Category =
   | "mobile"
   | "security"
   | "indexing"
-  | "cwv";
+  | "cwv"
+  | "ai_search";
 
 interface Issue {
   severity: Severity;

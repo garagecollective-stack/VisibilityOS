@@ -5,6 +5,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 export const ALL_INTENTS = [
@@ -16,6 +23,8 @@ export const ALL_INTENTS = [
 
 export type Intent = (typeof ALL_INTENTS)[number];
 
+export type WordCount = "any" | "2" | "3" | "4plus";
+
 export interface IdeasFilters {
   volMin: number | null;
   volMax: number | null;
@@ -26,6 +35,7 @@ export interface IdeasFilters {
   intents: Intent[];
   include: string[];
   exclude: string[];
+  wordCount: WordCount;
 }
 
 export const DEFAULT_FILTERS: IdeasFilters = {
@@ -38,6 +48,7 @@ export const DEFAULT_FILTERS: IdeasFilters = {
   intents: [...ALL_INTENTS],
   include: [],
   exclude: [],
+  wordCount: "any",
 };
 
 export function countActiveFilters(filters: IdeasFilters): number {
@@ -48,6 +59,7 @@ export function countActiveFilters(filters: IdeasFilters): number {
   if (filters.intents.length < ALL_INTENTS.length) n++;
   if (filters.include.length > 0) n++;
   if (filters.exclude.length > 0) n++;
+  if (filters.wordCount !== "any") n++;
   return n;
 }
 
@@ -109,7 +121,7 @@ export function IdeasFilterPanel({ filters, onApply, onReset }: Props) {
   return (
     <Card>
       <CardContent className="space-y-5 p-5">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <RangeField
             label="Volume range"
             minPlaceholder="0"
@@ -138,6 +150,25 @@ export function IdeasFilterPanel({ filters, onApply, onReset }: Props) {
             onMax={setNum("cpcMax")}
             step="0.01"
           />
+          <div className="space-y-2">
+            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Word Count
+            </Label>
+            <Select
+              value={draft.wordCount}
+              onValueChange={(v) => setDraft((d) => ({ ...d, wordCount: v as WordCount }))}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any length</SelectItem>
+                <SelectItem value="2">2 words</SelectItem>
+                <SelectItem value="3">3 words</SelectItem>
+                <SelectItem value="4plus">4+ words</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="space-y-2">

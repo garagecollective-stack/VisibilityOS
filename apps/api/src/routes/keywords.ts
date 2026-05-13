@@ -783,6 +783,7 @@ router.post(
           keyword_difficulty: kdMap.get(keyword.toLowerCase()) ?? null,
           monthly_searches: volume?.monthly_searches ?? [],
           competition: volume?.competition ?? null,
+          competition_level: volume?.competition_level ?? null,
         });
       });
 

@@ -322,6 +322,20 @@ export default function KeywordListsPage() {
   const needsEnrichment =
     selectedList !== null && selectedList.items.length > 0 && enriched < selectedList.items.length;
 
+  const duplicateCount = useMemo(() => {
+    if (!selectedList || !rawKeywords.trim()) return 0;
+    const newKws = rawKeywords
+      .split(/\r?\n/)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const existingKws = new Set(
+      allLists
+        .filter((l) => l.projectId === selectedList.projectId)
+        .flatMap((l) => l.items.map((i) => i.keyword.keyword.toLowerCase()))
+    );
+    return newKws.filter((kw) => existingKws.has(kw)).length;
+  }, [rawKeywords, allLists, selectedList]);
+
   const exportSelected = (items: KeywordListItem[], filename: string) => {
     const header = ["Keyword", "Volume", "KD", "CPC", "Intent", "Location", "Language", "Device", "Added"];
     const rows = items.map((item) => [
@@ -465,6 +479,11 @@ export default function KeywordListsPage() {
                             </span>
                           </span>
                         </div>
+                        {avgKd === null && avgVol === null && list.items.length > 0 && (
+                          <p className="text-[10px] text-orange-500">
+                            ⚡ Enrich to see volume &amp; KD data
+                          </p>
+                        )}
                         <p className="text-[10px] text-muted-foreground">
                           Last updated {relativeTime(list.lastEnrichedAt ?? list.createdAt)}
                         </p>
@@ -503,7 +522,11 @@ export default function KeywordListsPage() {
                     size="sm"
                     onClick={() => enrichMutation.mutate()}
                     disabled={enrichMutation.isPending || selectedList.items.length === 0}
+                    className="relative"
                   >
+                    {needsEnrichment && !enrichMutation.isPending && (
+                      <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-orange-500" />
+                    )}
                     <Sparkles className="mr-1.5 h-3.5 w-3.5" />
                     {enrichMutation.isPending
                       ? "Enriching…"
@@ -777,6 +800,11 @@ export default function KeywordListsPage() {
               className="min-h-48"
             />
           </div>
+          {duplicateCount > 0 && (
+            <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800 dark:border-yellow-900/40 dark:bg-yellow-950/30 dark:text-yellow-400">
+              {duplicateCount} keyword{duplicateCount === 1 ? "" : "s"} already exist in this project&apos;s lists. They will be added again as duplicates.
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>
               Cancel

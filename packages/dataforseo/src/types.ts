@@ -54,7 +54,7 @@ export interface KeywordSuggestion {
   language_code: string;
   search_volume: number;
   competition: number;
-  competition_level: string;
+  competition_level: string | null;
   cpc: number;
   keyword_difficulty: number | null;
   keyword_properties: {
@@ -94,7 +94,7 @@ export interface BulkVolumeItem {
   language_code: string;
   search_volume: number;
   competition: number;
-  competition_level: string;
+  competition_level: string | null;
   cpc: number;
   monthly_searches: Array<{
     year: number;
@@ -116,7 +116,7 @@ export interface KeywordIdea {
   language_code: string;
   search_volume: number;
   competition: number;
-  competition_level: string;
+  competition_level: string | null;
   cpc: number;
   keyword_difficulty: number | null;
   serp_item_types: string[];

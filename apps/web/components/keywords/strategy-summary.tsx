@@ -1,5 +1,6 @@
-import { Layers, ListChecks, Sparkles, Target } from "lucide-react";
+import { Layers, ListChecks, MousePointerClick, Sparkles, Target } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { formatMetric } from "@/lib/keywords";
 import type { KeywordStrategyResult } from "@/lib/keywords";
 import { cn } from "@/lib/utils";
 
@@ -36,11 +37,19 @@ export function StrategySummary({ strategy }: Props) {
   const avgKd =
     allKds.length === 0 ? 0 : Math.round(allKds.reduce((s, n) => s + n, 0) / allKds.length);
 
+  const totalVolume =
+    strategy.pillar.volume +
+    strategy.clusters.reduce(
+      (sum, c) => sum + c.pillar_page.volume + c.supporting_keywords.reduce((s, k) => s + k.volume, 0),
+      0
+    );
+  const estTraffic = Math.round(totalVolume * 0.28);
+
   return (
     <Card>
       <CardContent className="space-y-4 p-5">
         <p className="text-sm text-foreground">{strategy.summary}</p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <Stat icon={<ListChecks className="h-4 w-4" />} label="Total Keywords" value={totalKeywords.toLocaleString()} />
           <Stat icon={<Layers className="h-4 w-4" />} label="Clusters" value={clusterCount.toString()} />
           <Stat
@@ -54,6 +63,12 @@ export function StrategySummary({ strategy }: Props) {
             label="Avg KD"
             value={avgKd.toString()}
             valueClassName={kdColor(avgKd)}
+          />
+          <Stat
+            icon={<MousePointerClick className="h-4 w-4" />}
+            label="Est. Traffic"
+            value={`${formatMetric(estTraffic)}/mo`}
+            valueClassName="text-primary"
           />
         </div>
       </CardContent>

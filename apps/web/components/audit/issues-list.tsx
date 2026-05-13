@@ -31,7 +31,8 @@ type Category =
   | "mobile"
   | "security"
   | "indexing"
-  | "cwv";
+  | "cwv"
+  | "ai_search";
 
 export interface IssueRow {
   id: string;
@@ -62,6 +63,7 @@ const CATEGORY_LABELS: Record<Category, string> = {
   security: "Security",
   indexing: "Indexing",
   cwv: "Core Web Vitals",
+  ai_search: "AI Search",
 };
 
 export function IssuesList({ issues }: { issues: IssueRow[] }) {
@@ -102,7 +104,7 @@ export function IssuesList({ issues }: { issues: IssueRow[] }) {
       <CardContent className="space-y-4 p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-base font-semibold">Issues</h3>
-          <div className="min-w-[180px]">
+          <div className="print:hidden min-w-[180px]">
             <Select
               value={categoryFilter}
               onValueChange={(value) => setCategoryFilter(value as "all" | Category)}
@@ -123,7 +125,7 @@ export function IssuesList({ issues }: { issues: IssueRow[] }) {
         </div>
 
         <Tabs value={severityTab} onValueChange={(v) => setSeverityTab(v as "all" | Severity)}>
-          <TabsList className="grid grid-cols-4 sm:inline-flex sm:w-auto">
+          <TabsList className="print:hidden grid grid-cols-4 sm:inline-flex sm:w-auto">
             {SEVERITY_TABS.map((tab) => (
               <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5">
                 {tab.label}

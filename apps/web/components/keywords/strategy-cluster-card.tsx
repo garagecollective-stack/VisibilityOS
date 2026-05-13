@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Bookmark, ChevronDown, ChevronRight, FileText, Sparkles } from "lucide-react";
+import { Activity, Bookmark, ChevronDown, ChevronRight, FileText, Sparkles } from "lucide-react";
 import { KdBadge } from "@/components/keywords/kd-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -13,6 +13,7 @@ interface Props {
   defaultOpen?: boolean;
   onSaveKeyword: (keyword: string) => void;
   onSaveCluster: (keywords: string[]) => void;
+  trackedKeywords?: Set<string>;
 }
 
 export function StrategyClusterCard({
@@ -20,6 +21,7 @@ export function StrategyClusterCard({
   defaultOpen = true,
   onSaveKeyword,
   onSaveCluster,
+  trackedKeywords,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
   const total = 1 + cluster.supporting_keywords.length;
@@ -112,6 +114,12 @@ export function StrategyClusterCard({
                       <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
                         <Sparkles className="h-2.5 w-2.5" />
                         Quick Win
+                      </span>
+                    )}
+                    {trackedKeywords?.has(kw.keyword) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                        <Activity className="h-2.5 w-2.5" />
+                        Tracking
                       </span>
                     )}
                   </div>

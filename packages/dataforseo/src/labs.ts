@@ -74,11 +74,19 @@ export class LabsClient {
     const params = { keywords, location_code: locationCode, language_code: languageCode };
 
     const fetcher = async () => {
-      const res = await this.client.post<{ items: BulkKdItem[] }>(
+      const res = await this.client.post<BulkKdItem | { items: BulkKdItem[] }>(
         "/v3/dataforseo_labs/google/bulk_keyword_difficulty/live",
         [params]
       );
-      return res.tasks[0]?.result?.[0]?.items ?? [];
+      const result = res.tasks[0]?.result;
+      if (!result || result.length === 0) return [];
+      // Some DataForSEO Labs endpoints wrap items under result[0].items;
+      // others return items directly in the result array.
+      const first = result[0] as unknown as { items?: BulkKdItem[] } | BulkKdItem;
+      if (first && "items" in first && Array.isArray(first.items)) {
+        return first.items;
+      }
+      return result as unknown as BulkKdItem[];
     };
 
     if (this.cache) {

@@ -17,6 +17,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Bookmark,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -58,7 +59,7 @@ import { exportKeywordsToCSV, formatMetric, type KeywordIdeaResult, type Keyword
 import { ssGet, ssParse, ssSet, ssStringify } from "@/lib/session-store";
 import { cn } from "@/lib/utils";
 
-type TabValue = "all" | "questions" | "low_comp" | "by_intent";
+type TabValue = "all" | "questions" | "low_comp" | "by_intent" | "by_topic";
 
 const QUESTION_WORDS = [
   "who", "what", "when", "where", "why", "how",
@@ -75,6 +76,17 @@ const LOADING_MESSAGES = [
 
 function isQuestion(keyword: string): boolean {
   return QUESTION_RE.test(keyword);
+}
+
+function wordCount(keyword: string): number {
+  return keyword.trim().split(/\s+/).length;
+}
+
+function ctrForKd(kd: number | null): number {
+  if (kd == null) return 0.15;
+  if (kd <= 30) return 0.28;
+  if (kd <= 60) return 0.15;
+  return 0.08;
 }
 
 function applyFilters(rows: KeywordRow[], filters: IdeasFilters): KeywordRow[] {
@@ -94,6 +106,10 @@ function applyFilters(rows: KeywordRow[], filters: IdeasFilters): KeywordRow[] {
       const lk = row.keyword.toLowerCase();
       if (filters.exclude.some((t) => lk.includes(t.toLowerCase()))) return false;
     }
+    const wc = wordCount(row.keyword);
+    if (filters.wordCount === "2" && wc !== 2) return false;
+    if (filters.wordCount === "3" && wc !== 3) return false;
+    if (filters.wordCount === "4plus" && wc < 4) return false;
     return true;
   });
 }
@@ -110,6 +126,7 @@ export default function KeywordIdeasPage() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [dialogKeywords, setDialogKeywords] = useState<string[]>([]);
   const [loadingMsg, setLoadingMsg] = useState(0);
+  const [phraseMatch, setPhraseMatch] = useState(false);
 
   const [results, setResults] = useState<KeywordIdeaResult | null>(null);
   const [resultsFor, setResultsFor] = useState("");
@@ -162,6 +179,12 @@ export default function KeywordIdeasPage() {
   const allIdeas = results?.ideas ?? [];
   const afterFilters = useMemo(() => applyFilters(allIdeas, filters), [allIdeas, filters]);
 
+  const afterPhraseMatch = useMemo(() => {
+    if (!phraseMatch || !resultsFor) return afterFilters;
+    const seed = resultsFor.toLowerCase();
+    return afterFilters.filter((r) => r.keyword.toLowerCase().includes(seed));
+  }, [afterFilters, phraseMatch, resultsFor]);
+
   const hasTrendData = useMemo(
     () => allIdeas.some((r) => Array.isArray(r.monthly_searches) && r.monthly_searches.length > 0),
     [allIdeas]
@@ -169,19 +192,20 @@ export default function KeywordIdeasPage() {
 
   const tabCounts = useMemo(
     () => ({
-      all: afterFilters.length,
-      questions: afterFilters.filter((r) => isQuestion(r.keyword)).length,
-      low_comp: afterFilters.filter((r) => (r.keyword_difficulty ?? 100) < 30).length,
-      by_intent: afterFilters.length,
+      all: afterPhraseMatch.length,
+      questions: afterPhraseMatch.filter((r) => isQuestion(r.keyword)).length,
+      low_comp: afterPhraseMatch.filter((r) => (r.keyword_difficulty ?? 100) < 30).length,
+      by_intent: afterPhraseMatch.length,
+      by_topic: afterPhraseMatch.length,
     }),
-    [afterFilters]
+    [afterPhraseMatch]
   );
 
   const tabFiltered = useMemo(() => {
-    if (tab === "questions") return afterFilters.filter((r) => isQuestion(r.keyword));
-    if (tab === "low_comp") return afterFilters.filter((r) => (r.keyword_difficulty ?? 100) < 30);
-    return afterFilters;
-  }, [afterFilters, tab]);
+    if (tab === "questions") return afterPhraseMatch.filter((r) => isQuestion(r.keyword));
+    if (tab === "low_comp") return afterPhraseMatch.filter((r) => (r.keyword_difficulty ?? 100) < 30);
+    return afterPhraseMatch;
+  }, [afterPhraseMatch, tab]);
 
   const activeFilterCount = countActiveFilters(filters);
   const hasResults = results !== null;
@@ -313,30 +337,61 @@ export default function KeywordIdeasPage() {
             }
           />
 
-          <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
-            <TabsList className="grid grid-cols-2 sm:inline-flex sm:w-auto">
-              <TabsTrigger value="all" className="gap-1.5">
-                All
-                <CountBadge value={tabCounts.all} />
-              </TabsTrigger>
-              <TabsTrigger value="questions" className="gap-1.5">
-                Questions
-                <CountBadge value={tabCounts.questions} />
-              </TabsTrigger>
-              <TabsTrigger value="low_comp" className="gap-1.5">
-                Low Competition
-                <CountBadge value={tabCounts.low_comp} accent="green" />
-              </TabsTrigger>
-              <TabsTrigger value="by_intent" className="gap-1.5">
-                By Intent
-                <CountBadge value={tabCounts.by_intent} />
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <div className="flex flex-wrap items-center gap-3">
+            <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
+              <TabsList className="inline-flex w-auto">
+                <TabsTrigger value="all" className="gap-1.5">
+                  All
+                  <CountBadge value={tabCounts.all} />
+                </TabsTrigger>
+                <TabsTrigger value="questions" className="gap-1.5">
+                  Questions
+                  <CountBadge value={tabCounts.questions} />
+                </TabsTrigger>
+                <TabsTrigger value="low_comp" className="gap-1.5">
+                  Low Comp
+                  <CountBadge value={tabCounts.low_comp} accent="green" />
+                </TabsTrigger>
+                <TabsTrigger value="by_intent" className="gap-1.5">
+                  By Intent
+                  <CountBadge value={tabCounts.by_intent} />
+                </TabsTrigger>
+                <TabsTrigger value="by_topic" className="gap-1.5">
+                  By Topic
+                  <CountBadge value={tabCounts.by_topic} />
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
 
-          {tab === "by_intent" ? (
+            <button
+              type="button"
+              onClick={() => setPhraseMatch((p) => !p)}
+              className={cn(
+                "ml-auto inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+                phraseMatch
+                  ? "border-primary bg-primary/5 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              )}
+              title="Phrase match: only show keywords containing the seed keyword"
+            >
+              <span className="h-2 w-2 rounded-full border border-current" />
+              {phraseMatch ? "Phrase" : "Broad"}
+            </button>
+          </div>
+
+          {tab === "by_topic" ? (
+            <ByTopicView
+              rows={tabFiltered}
+              selected={selected}
+              onToggleRow={toggleRow}
+              onSave={(kw) => {
+                setDialogKeywords([kw]);
+                setSaveDialogOpen(true);
+              }}
+            />
+          ) : tab === "by_intent" ? (
             <ByIntentView
-              rows={afterFilters}
+              rows={tabFiltered}
               hasTrendData={hasTrendData}
               selected={selected}
               onToggleRow={toggleRow}
@@ -511,6 +566,17 @@ function IdeasTable({
         header: "Intent",
         cell: ({ getValue }) => <IntentBadge intent={getValue<string>()} />,
         enableSorting: false,
+      },
+      {
+        id: "est_clicks",
+        header: "Est. Clicks",
+        cell: ({ row }) => {
+          const clicks = Math.round(row.original.search_volume * ctrForKd(row.original.keyword_difficulty));
+          return <span className="tabular-nums text-xs">{formatMetric(clicks)}</span>;
+        },
+        sortingFn: (a, b) =>
+          Math.round(a.original.search_volume * ctrForKd(a.original.keyword_difficulty)) -
+          Math.round(b.original.search_volume * ctrForKd(b.original.keyword_difficulty)),
       },
     ];
     if (hasTrendData) {
@@ -743,6 +809,164 @@ function ByIntentView({
           </CardContent>
         </Card>
       ))}
+    </div>
+  );
+}
+
+// ── By Topic grouped view ────────────────────────────────────────────────────
+
+const TOPIC_STOPWORDS = new Set([
+  "best", "top", "how", "what", "is", "are", "a", "an", "the", "to", "for",
+  "of", "and", "or", "in", "with", "vs", "versus", "free", "cheap", "online",
+  "do", "does", "can", "will", "my", "your", "get", "use", "using", "used",
+]);
+
+function getTopicKey(keyword: string): string {
+  const words = keyword.toLowerCase().split(/\s+/);
+  for (const word of words) {
+    if (word.length > 2 && !TOPIC_STOPWORDS.has(word)) return word;
+  }
+  return words[0] ?? keyword;
+}
+
+function ByTopicView({
+  rows,
+  selected,
+  onToggleRow,
+  onSave,
+}: {
+  rows: KeywordRow[];
+  selected: Set<string>;
+  onToggleRow: (kw: string) => void;
+  onSave: (kw: string) => void;
+}) {
+  const groups = useMemo(() => {
+    const map = new Map<string, KeywordRow[]>();
+    for (const row of rows) {
+      const key = getTopicKey(row.keyword);
+      const existing = map.get(key) ?? [];
+      map.set(key, [...existing, row]);
+    }
+    const other: KeywordRow[] = [];
+    const result: Array<{ topic: string; rows: KeywordRow[] }> = [];
+    for (const [topic, kws] of map.entries()) {
+      const sorted = [...kws].sort((a, b) => b.search_volume - a.search_volume);
+      if (kws.length >= 2) {
+        result.push({ topic: topic.charAt(0).toUpperCase() + topic.slice(1), rows: sorted });
+      } else {
+        other.push(...kws);
+      }
+    }
+    if (other.length > 0) {
+      result.push({ topic: "Other Topics", rows: other.sort((a, b) => b.search_volume - a.search_volume) });
+    }
+    return result.sort((a, b) => {
+      if (a.topic === "Other Topics") return 1;
+      if (b.topic === "Other Topics") return -1;
+      return b.rows.reduce((s, r) => s + r.search_volume, 0) - a.rows.reduce((s, r) => s + r.search_volume, 0);
+    });
+  }, [rows]);
+
+  const [open, setOpen] = useState<Set<string>>(
+    new Set(groups.slice(0, 4).map((g) => g.topic))
+  );
+
+  if (groups.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-10 text-center text-sm text-muted-foreground">
+          No keywords match the current filters.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {groups.map((group) => {
+        const isOpen = open.has(group.topic);
+        return (
+          <Card key={group.topic} className="overflow-hidden">
+            <button
+              type="button"
+              onClick={() =>
+                setOpen((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(group.topic)) next.delete(group.topic);
+                  else next.add(group.topic);
+                  return next;
+                })
+              }
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-accent"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold">
+                {isOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                )}
+                {group.topic}
+                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+                  {group.rows.length}
+                </span>
+              </span>
+              <span className="text-xs text-muted-foreground">
+                ~{formatMetric(group.rows.reduce((s, r) => s + r.search_volume, 0))} vol
+              </span>
+            </button>
+            {isOpen && (
+              <div className="border-t">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/30 hover:bg-muted/30">
+                      <TableHead className="w-10" />
+                      <TableHead>Keyword</TableHead>
+                      <TableHead className="text-right">Volume</TableHead>
+                      <TableHead className="text-center">KD</TableHead>
+                      <TableHead className="text-right">Est. Clicks</TableHead>
+                      <TableHead className="w-10" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {group.rows.map((row) => (
+                      <TableRow key={row.keyword}>
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 cursor-pointer accent-orange-500"
+                            checked={selected.has(row.keyword)}
+                            onChange={() => onToggleRow(row.keyword)}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{row.keyword}</TableCell>
+                        <TableCell className="text-right tabular-nums text-xs">
+                          {formatMetric(row.search_volume)}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <KdBadge value={row.keyword_difficulty} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-xs">
+                          {formatMetric(Math.round(row.search_volume * ctrForKd(row.keyword_difficulty)))}
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            type="button"
+                            title="Save to list"
+                            onClick={() => onSave(row.keyword)}
+                            className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+                          >
+                            <Bookmark className="h-4 w-4" />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </Card>
+        );
+      })}
     </div>
   );
 }

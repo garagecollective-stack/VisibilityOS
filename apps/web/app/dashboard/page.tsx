@@ -6,6 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Eye,
   FolderOpen,
+  Globe,
+  Link2,
   Plus,
   Search,
   ShieldCheck,
@@ -41,6 +43,10 @@ import { QuickActionsCard } from "@/components/dashboard/quick-actions-card";
 import { GscConnectionCard } from "@/components/dashboard/gsc-connection-card";
 import { IssuesSummary } from "@/components/dashboard/issues-summary";
 import { CompetitorSnapshot } from "@/components/dashboard/competitor-snapshot";
+import { KeywordDistributionCard } from "@/components/dashboard/keyword-distribution";
+import { KeywordChangesCard } from "@/components/dashboard/keyword-changes";
+import { TopPagesCard } from "@/components/dashboard/top-pages";
+import type { TopPage } from "@/components/dashboard/top-pages";
 import { apiClient } from "@/lib/api";
 import { ssGet, ssSet } from "@/lib/session-store";
 
@@ -93,6 +99,22 @@ interface TrackedKeyword {
 interface VisibilityPoint {
   date: string;
   visibility_score: number;
+}
+
+interface DashboardData {
+  backlinks: {
+    referringDomains: number | null;
+    referringDomainsDelta: number | null;
+    totalBacklinks: number | null;
+    domainAuthority: number | null;
+    lastCheckedAt: string | null;
+  };
+  contentScore: number | null;
+  pagesWithIssues: number;
+  pagesCrawled: number;
+  keywordDistribution: Record<string, number>;
+  keywordChanges: { newKeywords: number; lostKeywords: number };
+  topPages: TopPage[];
 }
 
 export default function DashboardPage() {
@@ -176,8 +198,21 @@ export default function DashboardPage() {
     retry: false,
   });
 
+  const dashboardQuery = useQuery({
+    queryKey: ["dashboardData", selectedProjectId],
+    queryFn: async () => {
+      const token = await getToken();
+      return apiClient<DashboardData>(`/dashboard/${selectedProjectId}`, {
+        token: token ?? undefined,
+      });
+    },
+    enabled: !!selectedProjectId,
+    retry: false,
+  });
+
   const trackedCount = trackedKeywordsQuery.data?.keywords.length ?? 0;
   const latestVisibility = visibilityQuery.data?.visibility?.[0]?.visibility_score ?? null;
+  const dashData = dashboardQuery.data;
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -287,8 +322,8 @@ export default function DashboardPage() {
       {/* Main */}
       {!isLoading && selectedProject && (
         <>
-          {/* Top stats row */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {/* Top stats row — 6 cards */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <MetricCard
               label="Overall Health Score"
               icon={<ShieldCheck className="h-4 w-4" />}
@@ -331,6 +366,45 @@ export default function DashboardPage() {
               sampleData={latestVisibility == null}
               tooltip="A 0–100 estimate of your share of organic search traffic for tracked keywords."
             />
+            <MetricCard
+              label="Referring Domains"
+              icon={<Link2 className="h-4 w-4" />}
+              value={dashData?.backlinks.referringDomains ?? "—"}
+              trend={
+                dashData?.backlinks.referringDomainsDelta != null
+                  ? { value: dashData.backlinks.referringDomainsDelta }
+                  : null
+              }
+              hint={dashData?.backlinks.referringDomains != null ? "unique linking domains" : "No data yet"}
+              accent={
+                dashData?.backlinks.referringDomains == null
+                  ? "default"
+                  : dashData.backlinks.referringDomains >= 50
+                  ? "green"
+                  : dashData.backlinks.referringDomains >= 10
+                  ? "blue"
+                  : "yellow"
+              }
+              sampleData={dashData?.backlinks.referringDomains == null}
+              tooltip="Number of unique domains linking to your site."
+            />
+            <MetricCard
+              label="Domain Authority"
+              icon={<Globe className="h-4 w-4" />}
+              value={dashData?.backlinks.domainAuthority ?? "—"}
+              hint={dashData?.backlinks.domainAuthority != null ? "DataForSEO domain rank" : "No data yet"}
+              accent={
+                dashData?.backlinks.domainAuthority == null
+                  ? "default"
+                  : dashData.backlinks.domainAuthority >= 50
+                  ? "green"
+                  : dashData.backlinks.domainAuthority >= 30
+                  ? "yellow"
+                  : "red"
+              }
+              sampleData={dashData?.backlinks.domainAuthority == null}
+              tooltip="Domain authority score (0–100) from DataForSEO. Higher is stronger."
+            />
           </div>
 
           {/* Main grid 60/40 */}
@@ -338,6 +412,14 @@ export default function DashboardPage() {
             <div className="space-y-4 lg:col-span-3">
               <RankMovementsChart projectId={selectedProjectId} />
               <TopMoversTable projectId={selectedProjectId} />
+              <KeywordDistributionCard
+                distribution={dashData?.keywordDistribution ?? {}}
+                isSample={!dashData || Object.keys(dashData.keywordDistribution).length === 0}
+              />
+              <TopPagesCard
+                pages={dashData?.topPages ?? []}
+                isSample={!dashData || dashData.topPages.length === 0}
+              />
               <RecentAlerts />
             </div>
             <div className="space-y-4 lg:col-span-2">
@@ -347,8 +429,18 @@ export default function DashboardPage() {
                 technicalScore={latestCompletedAudit?.technicalScore ?? null}
                 keywordsScore={null}
                 backlinksScore={null}
+                contentScore={dashData?.contentScore ?? null}
               />
-              <QuickActionsCard />
+              <KeywordChangesCard
+                newKeywords={dashData?.keywordChanges.newKeywords ?? 0}
+                lostKeywords={dashData?.keywordChanges.lostKeywords ?? 0}
+                isSample={!dashData}
+              />
+              <QuickActionsCard
+                hasAudit={!!latestCompletedAudit}
+                hasKeywords={trackedCount > 0}
+                lastBacklinkCheck={dashData?.backlinks.lastCheckedAt ?? null}
+              />
               <GscConnectionCard connected={!!selectedProject.gscConnected} />
             </div>
           </div>
@@ -359,7 +451,8 @@ export default function DashboardPage() {
             criticalIssues={latestCompletedAudit?.criticalIssues ?? 0}
             warnings={latestCompletedAudit?.warnings ?? 0}
             notices={latestCompletedAudit?.notices ?? 0}
-            pagesCrawled={latestCompletedAudit?.pagesCrawled ?? 0}
+            pagesCrawled={dashData?.pagesCrawled ?? latestCompletedAudit?.pagesCrawled ?? 0}
+            pagesWithIssues={dashData?.pagesWithIssues ?? 0}
           />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

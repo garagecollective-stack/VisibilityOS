@@ -11,6 +11,38 @@ import { relations } from "drizzle-orm";
 import { projects } from "./projects.js";
 import { createId } from "../utils.js";
 
+export interface AiCrawlerAccess {
+  chatgpt_user?: "allowed" | "blocked" | "unknown";
+  oai_searchbot?: "allowed" | "blocked" | "unknown";
+  gptbot?: "allowed" | "blocked" | "unknown";
+  google_extended?: "allowed" | "blocked" | "unknown";
+  perplexitybot?: "allowed" | "blocked" | "unknown";
+  claudebot?: "allowed" | "blocked" | "unknown";
+}
+
+export interface RawMetricsJson {
+  pages_crawled?: number;
+  site_health_score?: number;
+  total_issues?: number;
+  total_errors?: number;
+  total_warnings?: number;
+  total_notices?: number;
+  meta_errors?: number;
+  meta_warnings?: number;
+  links_errors?: number;
+  links_warnings?: number;
+  speed_warnings?: number;
+  content_warnings?: number;
+  schema_notices?: number;
+  mobile_errors?: number;
+  security_errors?: number;
+  indexing_warnings?: number;
+  cwv_failures?: number;
+  ai_search_issues?: number;
+  ai_search_score?: number;
+  llms_txt_found?: boolean;
+}
+
 export interface CrawledPageSummary {
   url: string;
   status_code: number;
@@ -20,6 +52,9 @@ export interface CrawledPageSummary {
   word_count: number;
   is_https: boolean;
   issues_count: number;
+  has_json_ld?: boolean;
+  has_canonical?: boolean;
+  incoming_links_count?: number;
 }
 
 export const auditStatusEnum = pgEnum("audit_status", [
@@ -41,6 +76,7 @@ export const issueCategoryEnum = pgEnum("issue_category", [
   "security",
   "indexing",
   "cwv",
+  "ai_search",
 ]);
 
 export const auditRuns = pgTable("audit_runs", {
@@ -57,6 +93,8 @@ export const auditRuns = pgTable("audit_runs", {
   technicalScore: real("technical_score"),
   cwvScore: real("cwv_score"),
   crawledPages: jsonb("crawled_pages").$type<CrawledPageSummary[]>().notNull().default([]),
+  aiCrawlerAccess: jsonb("ai_crawler_access").$type<AiCrawlerAccess>().notNull().default({}),
+  rawMetricsJson: jsonb("raw_metrics_json").$type<RawMetricsJson>().notNull().default({}),
   failureReason: text("failure_reason"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),

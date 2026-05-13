@@ -32,7 +32,24 @@ const ACTIONS = [
   },
 ] as const;
 
-export function QuickActionsCard() {
+interface Props {
+  hasAudit?: boolean;
+  hasKeywords?: boolean;
+  lastBacklinkCheck?: string | null;
+}
+
+export function QuickActionsCard({ hasAudit = true, hasKeywords = true, lastBacklinkCheck }: Props) {
+  // Determine the href of the single most important action to highlight
+  let priorityHref: string | null = null;
+  if (!hasAudit) priorityHref = "/dashboard/audit";
+  else if (!hasKeywords) priorityHref = "/dashboard/keywords/lists";
+  else if (
+    lastBacklinkCheck &&
+    Date.now() - new Date(lastBacklinkCheck).getTime() > 30 * 24 * 60 * 60 * 1000
+  ) {
+    priorityHref = "/dashboard/rank-tracker";
+  }
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -44,11 +61,15 @@ export function QuickActionsCard() {
       <CardContent className="grid grid-cols-2 gap-2">
         {ACTIONS.map((action) => {
           const Icon = action.icon;
+          const isPriority = priorityHref === action.href;
           return (
             <Link
               key={action.href}
               href={action.href}
-              className="group flex items-center gap-2.5 rounded-md border bg-background p-3 text-sm transition-colors hover:border-primary/40 hover:bg-accent"
+              className={cn(
+                "group flex items-center gap-2.5 rounded-md border bg-background p-3 text-sm transition-colors hover:border-primary/40 hover:bg-accent",
+                isPriority && "border-primary/40 bg-primary/5 ring-1 ring-primary/20"
+              )}
             >
               <span
                 className={cn(
@@ -58,7 +79,12 @@ export function QuickActionsCard() {
               >
                 <Icon className="h-4 w-4" />
               </span>
-              <span className="font-medium">{action.label}</span>
+              <div className="flex flex-col">
+                <span className="font-medium">{action.label}</span>
+                {isPriority && (
+                  <span className="text-[10px] text-primary">Recommended</span>
+                )}
+              </div>
             </Link>
           );
         })}
