@@ -2,6 +2,8 @@ import {
   pgTable,
   text,
   boolean,
+  integer,
+  real,
   pgEnum,
   timestamp,
 } from "drizzle-orm/pg-core";
@@ -39,6 +41,7 @@ export const keywordLists = pgTable("keyword_lists", {
     .references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   tags: text("tags").array().notNull().default([]),
+  lastEnrichedAt: timestamp("last_enriched_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -58,6 +61,10 @@ export const keywordListItems = pgTable("keyword_list_items", {
   keywordId: text("keyword_id")
     .notNull()
     .references(() => trackedKeywords.id, { onDelete: "cascade" }),
+  volume: integer("volume"),
+  kd: integer("kd"),
+  cpc: real("cpc"),
+  intent: text("intent"),
 });
 
 export const keywordListItemsRelations = relations(keywordListItems, ({ one }) => ({

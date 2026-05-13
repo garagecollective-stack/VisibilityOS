@@ -18,9 +18,32 @@ export function enforcePlanLimit(resource: PlanResource): MiddlewareHandler {
     const orgId = c.get("orgId");
     const db = getDb();
 
-    const org = await db.query.organizations.findFirst({
+    console.log(`[planLimits] resource="${resource}" orgId="${orgId}"`);
+
+    let org = await db.query.organizations.findFirst({
       where: eq(organizations.id, orgId),
     });
+
+    if (!org) {
+      // Org not found — auto-create it. In production the Clerk webhook creates
+      // the org row, but in local dev the webhook never fires. We upsert here
+      // (the first real entry point that needs an org) so local dev always works.
+      console.log(`[planLimits] org not found for orgId="${orgId}" — creating it now`);
+      try {
+        await db
+          .insert(organizations)
+          .values({ id: orgId, name: orgId, slug: orgId, plan: "starter" })
+          .onConflictDoNothing();
+        org = await db.query.organizations.findFirst({
+          where: eq(organizations.id, orgId),
+        });
+        console.log(`[planLimits] org created:`, org ? { id: org.id, plan: org.plan } : "still null after insert");
+      } catch (err) {
+        console.error(`[planLimits] failed to auto-create org for orgId="${orgId}":`, err instanceof Error ? err.message : err);
+      }
+    } else {
+      console.log(`[planLimits] org found: id="${org.id}" plan="${org.plan}"`);
+    }
 
     if (!org) return c.json({ error: "Organization not found" }, 404);
 

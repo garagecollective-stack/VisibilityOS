@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { getDb } from "../lib/db/index.js";
-import { projects } from "@garage-seo/db";
+import { projects, organizations } from "@garage-seo/db";
 import { eq, and } from "drizzle-orm";
 import { createId } from "@garage-seo/db";
 import { enforcePlanLimit } from "../middleware/planLimits.js";
@@ -62,12 +62,28 @@ router.post(
     const body = c.req.valid("json");
     const db = getDb();
 
-    const [project] = await db
-      .insert(projects)
-      .values({ id: createId(), orgId, ...body })
-      .returning();
+    console.log(`[projects:post] orgId="${orgId}" domain="${body.domain}" name="${body.name}"`);
 
-    return c.json({ project }, 201);
+    // planLimits already upserted the org, but guard again in case this route
+    // is ever called without the middleware.
+    await db
+      .insert(organizations)
+      .values({ id: orgId, name: orgId, slug: orgId, plan: "starter" })
+      .onConflictDoNothing();
+
+    try {
+      const [project] = await db
+        .insert(projects)
+        .values({ id: createId(), orgId, ...body })
+        .returning();
+
+      console.log(`[projects:post] project created: id="${project!.id}"`);
+      return c.json({ project }, 201);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[projects:post] insert failed for orgId="${orgId}":`, msg);
+      return c.json({ error: "Failed to create project", detail: msg }, 500);
+    }
   }
 );
 

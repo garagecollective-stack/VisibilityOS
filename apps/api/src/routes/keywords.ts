@@ -1,4 +1,5 @@
 import "../types.js";
+import { createHash } from "crypto";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -7,6 +8,7 @@ import { trackedKeywords, projects, keywordLists, keywordListItems } from "@gara
 import { eq, and, inArray } from "drizzle-orm";
 import { createId } from "@garage-seo/db";
 import { DataForSEO } from "@garage-seo/dataforseo";
+import { ClaudeClient, type KeywordStrategyOutput } from "@garage-seo/ai";
 import { getRedis, makeCacheAdapter, CACHE_TTL } from "../lib/redis/index.js";
 import { enforcePlanLimit } from "../middleware/planLimits.js";
 
@@ -70,6 +72,8 @@ function toKeywordRow(item: {
   keyword_difficulty?: number | null;
   monthly_searches?: Array<{ year: number; month: number; search_volume: number }> | null;
   competition?: number | null;
+  competition_level?: string | null;
+  serp_item_types?: string[] | null;
 }) {
   return {
     keyword: item.keyword,
@@ -79,6 +83,8 @@ function toKeywordRow(item: {
     intent: classifyIntent(item.keyword),
     monthly_searches: item.monthly_searches ?? [],
     competition: item.competition ?? null,
+    competition_level: item.competition_level ?? null,
+    serp_item_types: item.serp_item_types ?? [],
   };
 }
 
@@ -101,6 +107,9 @@ function makeMockOverview(keyword: string) {
     keyword_difficulty: 42,
     intent: classifyIntent(keyword),
     monthly_searches,
+    competition: 0.42,
+    competition_level: "MEDIUM",
+    serp_item_types: ["organic", "people_also_ask", "featured_snippet", "sitelinks"],
   };
   const seeds = [
     "tools", "software", "checker", "analyzer", "guide", "tips",
@@ -110,6 +119,7 @@ function makeMockOverview(keyword: string) {
   ];
   const related = seeds.map((suffix, i) => {
     const kw = `${keyword} ${suffix}`;
+    const comp = Math.random();
     return {
       keyword: kw,
       search_volume: Math.floor(200 + Math.random() * 12000),
@@ -121,6 +131,9 @@ function makeMockOverview(keyword: string) {
         month: ((now.getMonth() + j) % 12) + 1,
         search_volume: Math.floor(100 + Math.random() * 5000),
       })),
+      competition: comp,
+      competition_level: comp < 0.34 ? "LOW" : comp < 0.67 ? "MEDIUM" : "HIGH",
+      serp_item_types: [] as string[],
     };
   });
   return { main, related };
@@ -143,25 +156,6 @@ function makeMockIdeas(keyword: string) {
       intent: classifyIntent(kw),
     };
   });
-}
-
-function clusterSupportingKeywords(keywords: Array<ReturnType<typeof toKeywordRow>>) {
-  const groups = new Map<string, Array<ReturnType<typeof toKeywordRow>>>();
-
-  for (const keyword of keywords) {
-    const parts = keyword.keyword.split(/\s+/);
-    const subtopic = parts.slice(0, 2).join(" ") || "General";
-    const bucket = groups.get(subtopic) ?? [];
-    bucket.push(keyword);
-    groups.set(subtopic, bucket);
-  }
-
-  return Array.from(groups.entries())
-    .slice(0, 6)
-    .map(([subtopic, rows]) => ({
-      subtopic,
-      keywords: rows.slice(0, 4),
-    }));
 }
 
 async function fetchKeywordIdeas(keyword: string, locationCode: number, languageCode: string) {
@@ -204,6 +198,7 @@ router.post(
       keyword: z.string().min(1).max(200),
       locationCode: z.number().int().positive().default(2356),
       languageCode: z.string().default("en"),
+      device: z.enum(["desktop", "mobile"]).optional(),
     })
   ),
   async (c) => {
@@ -246,6 +241,9 @@ router.post(
           keyword_difficulty: s.keyword_difficulty ?? s.keyword_properties?.keyword_difficulty ?? null,
           intent: classifyIntent(s.keyword),
           monthly_searches: s.monthly_searches ?? [],
+          competition: s.competition ?? null,
+          competition_level: s.competition_level ?? null,
+          serp_item_types: s.serp_item_types ?? [],
         }));
 
       let main;
@@ -258,6 +256,9 @@ router.post(
             exactMatch.keyword_difficulty ?? exactMatch.keyword_properties?.keyword_difficulty ?? null,
           intent: classifyIntent(exactMatch.keyword),
           monthly_searches: exactMatch.monthly_searches ?? [],
+          competition: exactMatch.competition ?? null,
+          competition_level: exactMatch.competition_level ?? null,
+          serp_item_types: exactMatch.serp_item_types ?? [],
         };
       } else {
         let volume: Awaited<ReturnType<typeof dfs.keywords.getBulkVolume>> = [];
@@ -275,6 +276,9 @@ router.post(
               keyword_difficulty: null as number | null,
               intent: classifyIntent(v.keyword),
               monthly_searches: v.monthly_searches ?? [],
+              competition: v.competition ?? null,
+              competition_level: v.competition_level ?? null,
+              serp_item_types: [] as string[],
             }
           : {
               keyword,
@@ -283,6 +287,9 @@ router.post(
               keyword_difficulty: null as number | null,
               intent: classifyIntent(keyword),
               monthly_searches: [],
+              competition: null as number | null,
+              competition_level: null as string | null,
+              serp_item_types: [] as string[],
             };
       }
 
@@ -332,6 +339,198 @@ router.post(
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[keywords/overview] ERROR:", msg, err);
       return c.json({ error: "Failed to fetch keyword data", detail: msg }, 500);
+    }
+  }
+);
+
+// ─── SERP (organic + PAA + features) ──────────────────────────────────────────
+
+type SerpResponse = {
+  organic: Array<{
+    position: number;
+    domain: string;
+    url: string;
+    title: string;
+    description: string;
+  }>;
+  paa: Array<{
+    question: string;
+    featured_title?: string;
+    featured_url?: string;
+  }>;
+  serp_features: string[];
+};
+
+function makeSerpCacheKey(keyword: string, locationCode: number, device: string): string {
+  const hash = createHash("sha256")
+    .update(`${keyword.toLowerCase()}|${locationCode}|${device}`)
+    .digest("hex");
+  return `serp:${hash}`;
+}
+
+function makeMockSerp(keyword: string): SerpResponse {
+  const slug = keyword.replace(/\s+/g, "-").toLowerCase();
+  return {
+    organic: [
+      {
+        position: 1,
+        domain: "wikipedia.org",
+        url: `https://en.wikipedia.org/wiki/${encodeURIComponent(keyword)}`,
+        title: `${keyword} - Wikipedia`,
+        description: `Comprehensive Wikipedia article about ${keyword}, including key concepts, history, and further reading.`,
+      },
+      {
+        position: 2,
+        domain: "moz.com",
+        url: `https://moz.com/learn/seo/${slug}`,
+        title: `What is ${keyword}? - Moz`,
+        description: `In-depth explanation of ${keyword}, why it matters for SEO, and best practices for implementation.`,
+      },
+      {
+        position: 3,
+        domain: "ahrefs.com",
+        url: `https://ahrefs.com/blog/${slug}`,
+        title: `${keyword}: A Complete Guide - Ahrefs`,
+        description: `Step-by-step guide to mastering ${keyword} with real-world examples and case studies.`,
+      },
+      {
+        position: 4,
+        domain: "semrush.com",
+        url: `https://www.semrush.com/blog/${slug}/`,
+        title: `${keyword} Strategy for 2026 - Semrush`,
+        description: `Learn how top brands are leveraging ${keyword} to drive sustainable growth this year.`,
+      },
+      {
+        position: 5,
+        domain: "backlinko.com",
+        url: `https://backlinko.com/${slug}`,
+        title: `${keyword} Guide (Updated 2026)`,
+        description: `Everything you need to know about ${keyword} — written by SEO experts and updated for 2026.`,
+      },
+    ],
+    paa: [
+      {
+        question: `What is ${keyword}?`,
+        featured_title: `${keyword} - Definition`,
+        featured_url: `https://en.wikipedia.org/wiki/${encodeURIComponent(keyword)}`,
+      },
+      {
+        question: `How does ${keyword} work?`,
+        featured_title: `${keyword} explained`,
+        featured_url: `https://moz.com/learn/seo/${slug}`,
+      },
+      {
+        question: `Why is ${keyword} important for SEO?`,
+        featured_title: `The importance of ${keyword}`,
+        featured_url: `https://ahrefs.com/blog/${slug}`,
+      },
+      {
+        question: `What are the best tools for ${keyword}?`,
+        featured_title: `Top ${keyword} tools 2026`,
+        featured_url: `https://www.semrush.com/blog/${slug}/`,
+      },
+      {
+        question: `${keyword} vs alternatives — which is better?`,
+        featured_title: `Comparison guide`,
+        featured_url: `https://backlinko.com/${slug}`,
+      },
+    ],
+    serp_features: ["organic", "people_also_ask", "featured_snippet", "sitelinks", "ai_overview"],
+  };
+}
+
+router.post(
+  "/serp",
+  zValidator(
+    "json",
+    z.object({
+      keyword: z.string().min(1).max(200),
+      locationCode: z.number().int().positive().default(2356),
+      device: z.enum(["desktop", "mobile"]).default("desktop"),
+    })
+  ),
+  async (c) => {
+    const { keyword, locationCode, device } = c.req.valid("json");
+    const cacheKey = makeSerpCacheKey(keyword, locationCode, device);
+    const redis = getRedis();
+
+    // Cache hit — return instantly
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return c.json(JSON.parse(cached) as SerpResponse);
+      }
+    } catch (err) {
+      console.warn("[keywords/serp] cache read failed:", err instanceof Error ? err.message : err);
+    }
+
+    // Mock fallback when DataForSEO creds are absent
+    if (!hasCreds()) {
+      const mock = makeMockSerp(keyword);
+      await redis.setex(cacheKey, 21_600, JSON.stringify(mock)).catch(() => {});
+      return c.json(mock);
+    }
+
+    try {
+      const dfs = getDataForSEO();
+      const raw = await dfs.serp.getOrganicResults(keyword, locationCode, "en", device, 100, 90_000);
+
+      // DataForSEO returns mixed item types in `items[]`; the TS type narrows to organic
+      // but the actual payload includes people_also_ask, featured_snippet, etc.
+      const items = raw.items as unknown as Array<{
+        type: string;
+        rank_absolute?: number;
+        domain?: string;
+        url?: string;
+        title?: string;
+        description?: string;
+        items?: Array<{
+          type?: string;
+          title?: string;
+          expanded_element?: Array<{
+            featured_title?: string;
+            url?: string;
+            description?: string;
+          }>;
+        }>;
+      }>;
+
+      const organic = items
+        .filter(
+          (it) =>
+            it.type === "organic" && it.rank_absolute && it.domain && it.url && it.title
+        )
+        .slice(0, 10)
+        .map((it) => ({
+          position: it.rank_absolute!,
+          domain: it.domain!,
+          url: it.url!,
+          title: it.title!,
+          description: it.description ?? "",
+        }));
+
+      const paaContainer = items.find((it) => it.type === "people_also_ask");
+      const paa = (paaContainer?.items ?? [])
+        .filter((q) => q.title)
+        .slice(0, 10)
+        .map((q) => ({
+          question: q.title!,
+          featured_title: q.expanded_element?.[0]?.featured_title,
+          featured_url: q.expanded_element?.[0]?.url,
+        }));
+
+      const response: SerpResponse = {
+        organic,
+        paa,
+        serp_features: raw.item_types ?? [],
+      };
+
+      await redis.setex(cacheKey, 21_600, JSON.stringify(response)).catch(() => {});
+      return c.json(response);
+    } catch (err) {
+      console.error("[keywords/serp]", err);
+      const msg = err instanceof Error ? err.message : "Failed to fetch SERP data";
+      return c.json({ error: msg }, 500);
     }
   }
 );
@@ -413,18 +612,54 @@ router.post(
     });
     if (!project) return c.json({ error: "Project not found" }, 404);
 
-    const rows = keywords.map((keyword) => ({
-      id: createId(),
-      projectId,
-      keyword,
-      locationCode: String(locationCode),
-      languageCode,
-      device,
-      isActive: true,
-    }));
+    // Dedup against existing (projectId, keyword, locationCode, languageCode, device)
+    const locationStr = String(locationCode);
+    const existing = await db
+      .select({
+        keyword: trackedKeywords.keyword,
+        locationCode: trackedKeywords.locationCode,
+        languageCode: trackedKeywords.languageCode,
+        device: trackedKeywords.device,
+      })
+      .from(trackedKeywords)
+      .where(
+        and(
+          eq(trackedKeywords.projectId, projectId),
+          inArray(trackedKeywords.keyword, keywords),
+          eq(trackedKeywords.locationCode, locationStr),
+          eq(trackedKeywords.languageCode, languageCode),
+          eq(trackedKeywords.device, device)
+        )
+      );
+    const existingSet = new Set(existing.map((e) => e.keyword));
+    const newKeywords = keywords.filter((kw) => !existingSet.has(kw));
 
-    const inserted = await db.insert(trackedKeywords).values(rows).returning();
-    return c.json({ keywords: inserted }, 201);
+    let inserted: Array<typeof trackedKeywords.$inferSelect> = [];
+    if (newKeywords.length > 0) {
+      inserted = await db
+        .insert(trackedKeywords)
+        .values(
+          newKeywords.map((keyword) => ({
+            id: createId(),
+            projectId,
+            keyword,
+            locationCode: locationStr,
+            languageCode,
+            device,
+            isActive: true,
+          }))
+        )
+        .returning();
+    }
+
+    return c.json(
+      {
+        keywords: inserted,
+        added: inserted.length,
+        duplicates: keywords.length - newKeywords.length,
+      },
+      201
+    );
   }
 );
 
@@ -559,38 +794,154 @@ router.post(
   }
 );
 
+function makeMockStrategy(topic: string): KeywordStrategyOutput {
+  const t = topic.trim();
+  const slug = t.replace(/\s+/g, " ").toLowerCase();
+  return {
+    pillar: {
+      keyword: `best ${slug}`,
+      volume: 12_100,
+      kd: 42,
+      cpc: 4.5,
+      rationale: `"${t}" is a transactional head term with strong commercial intent and moderate competition — the right anchor for the primary landing page.`,
+    },
+    clusters: [
+      {
+        topic: "Decision-stage comparisons",
+        pillar_page: {
+          keyword: `${slug} vs alternatives`,
+          volume: 2_400,
+          kd: 38,
+          content_type: "Comparison",
+        },
+        supporting_keywords: [
+          { keyword: `top ${slug} alternatives`, volume: 1_800, kd: 32, is_quick_win: true },
+          { keyword: `${slug} vs free options`, volume: 720, kd: 24, is_quick_win: true },
+          { keyword: `cheapest ${slug}`, volume: 480, kd: 21, is_quick_win: true },
+          { keyword: `${slug} pricing comparison`, volume: 990, kd: 41, is_quick_win: false },
+        ],
+      },
+      {
+        topic: "Educational / top of funnel",
+        pillar_page: {
+          keyword: `what is ${slug}`,
+          volume: 5_400,
+          kd: 28,
+          content_type: "Blog Post",
+        },
+        supporting_keywords: [
+          { keyword: `${slug} guide`, volume: 3_300, kd: 30, is_quick_win: true },
+          { keyword: `how does ${slug} work`, volume: 1_900, kd: 24, is_quick_win: true },
+          { keyword: `${slug} benefits`, volume: 880, kd: 22, is_quick_win: true },
+          { keyword: `${slug} examples`, volume: 1_100, kd: 26, is_quick_win: true },
+        ],
+      },
+      {
+        topic: "Implementation & best practice",
+        pillar_page: {
+          keyword: `${slug} best practices`,
+          volume: 1_600,
+          kd: 36,
+          content_type: "Guide",
+        },
+        supporting_keywords: [
+          { keyword: `${slug} checklist`, volume: 720, kd: 22, is_quick_win: true },
+          { keyword: `${slug} mistakes to avoid`, volume: 540, kd: 19, is_quick_win: true },
+          { keyword: `${slug} step by step`, volume: 410, kd: 28, is_quick_win: true },
+        ],
+      },
+      {
+        topic: "FAQ & objections",
+        pillar_page: {
+          keyword: `${slug} faq`,
+          volume: 320,
+          kd: 18,
+          content_type: "FAQ",
+        },
+        supporting_keywords: [
+          { keyword: `is ${slug} worth it`, volume: 880, kd: 25, is_quick_win: true },
+          { keyword: `${slug} pros and cons`, volume: 660, kd: 26, is_quick_win: true },
+          { keyword: `do i need ${slug}`, volume: 410, kd: 20, is_quick_win: true },
+        ],
+      },
+    ],
+    content_calendar: [
+      { week: 1, content_type: "Blog Post", keyword: `${slug} guide`, estimated_volume: 3_300, priority: "high" },
+      { week: 1, content_type: "FAQ", keyword: `is ${slug} worth it`, estimated_volume: 880, priority: "high" },
+      { week: 2, content_type: "Blog Post", keyword: `how does ${slug} work`, estimated_volume: 1_900, priority: "high" },
+      { week: 2, content_type: "Comparison", keyword: `top ${slug} alternatives`, estimated_volume: 1_800, priority: "high" },
+      { week: 3, content_type: "Blog Post", keyword: `${slug} examples`, estimated_volume: 1_100, priority: "medium" },
+      { week: 3, content_type: "Guide", keyword: `${slug} checklist`, estimated_volume: 720, priority: "medium" },
+      { week: 4, content_type: "Comparison", keyword: `${slug} vs free options`, estimated_volume: 720, priority: "medium" },
+      { week: 4, content_type: "FAQ", keyword: `${slug} pros and cons`, estimated_volume: 660, priority: "medium" },
+      { week: 5, content_type: "Landing Page", keyword: `best ${slug}`, estimated_volume: 12_100, priority: "high" },
+      { week: 6, content_type: "Guide", keyword: `${slug} best practices`, estimated_volume: 1_600, priority: "medium" },
+      { week: 7, content_type: "Blog Post", keyword: `${slug} mistakes to avoid`, estimated_volume: 540, priority: "low" },
+      { week: 8, content_type: "FAQ", keyword: `do i need ${slug}`, estimated_volume: 410, priority: "low" },
+    ],
+    summary: `A 4-cluster strategy anchored on "best ${slug}" as the primary landing page, supported by educational, comparison, implementation, and FAQ clusters. Quick wins in the FAQ and education clusters can build authority fast while the comparison and landing pages chase commercial intent.`,
+  };
+}
+
 router.post(
   "/strategy",
   zValidator(
     "json",
     z.object({
       topic: z.string().min(3).max(200),
+      targetUrl: z.string().url().optional(),
       url: z.string().url().optional(),
       locationCode: z.number().int().nonnegative().default(2356),
       languageCode: z.string().default("en"),
+      device: z.enum(["desktop", "mobile"]).optional(),
     })
   ),
   async (c) => {
-    const { topic, url, locationCode, languageCode } = c.req.valid("json");
-    const seed = url ? `${topic} ${new URL(url).hostname.replace(/^www\./, "")}` : topic;
+    const body = c.req.valid("json");
+    const targetUrl = body.targetUrl ?? body.url;
+    const { topic, locationCode, languageCode } = body;
+    const seed = targetUrl ? `${topic} ${new URL(targetUrl).hostname.replace(/^www\./, "")}` : topic;
+
+    const hasClaude = !!process.env["ANTHROPIC_API_KEY"];
+
+    // Mock fallback when either DataForSEO or Claude credentials are missing
+    if (!hasCreds() || !hasClaude) {
+      console.log(
+        `[keywords/strategy] mock fallback (DFS=${hasCreds()}, Claude=${hasClaude})`
+      );
+      return c.json(makeMockStrategy(topic));
+    }
 
     try {
       const ideas = await fetchKeywordIdeas(seed, locationCode, languageCode);
-      const sorted = [...ideas.ideas].sort((a, b) => b.search_volume - a.search_volume);
-      const pillarKeywords = sorted.slice(0, 5);
-      const supportingKeywords = clusterSupportingKeywords(sorted.slice(5, 25));
-      const quickWins = sorted
-        .filter((item) => (item.keyword_difficulty ?? 101) < 30 && item.search_volume > 500)
-        .slice(0, 12);
+      const topKeywords = [...ideas.ideas]
+        .sort((a, b) => b.search_volume - a.search_volume)
+        .slice(0, 25)
+        .map((kw) => ({
+          keyword: kw.keyword,
+          volume: kw.search_volume,
+          kd: kw.keyword_difficulty,
+          cpc: kw.cpc,
+          intent: kw.intent,
+        }));
 
-      return c.json({
-        pillarKeywords,
-        supportingKeywords,
-        quickWins,
+      if (topKeywords.length === 0) {
+        return c.json({ error: "No keyword data available for this topic" }, 404);
+      }
+
+      const claude = new ClaudeClient();
+      const strategy = await claude.generateKeywordStrategy({
+        topic,
+        targetUrl,
+        locationCode,
+        keywordData: topKeywords,
       });
+
+      return c.json(strategy);
     } catch (err) {
       console.error("[keywords/strategy]", err);
-      return c.json({ error: "Failed to build keyword strategy" }, 500);
+      const msg = err instanceof Error ? err.message : "Failed to build keyword strategy";
+      return c.json({ error: msg }, 500);
     }
   }
 );
@@ -602,10 +953,14 @@ router.get("/lists", async (c) => {
   const db = getDb();
   const projectId = c.req.query("projectId");
 
+  console.log(`[keywords/lists:get] orgId="${orgId}" projectIdFilter="${projectId ?? "none"}"`);
+
   const orgProjects = await db
     .select()
     .from(projects)
     .where(eq(projects.orgId, orgId));
+
+  console.log(`[keywords/lists:get] found ${orgProjects.length} org projects:`, orgProjects.map((p) => ({ id: p.id, name: p.name, orgId: p.orgId })));
 
   const allowedProjects = projectId
     ? orgProjects.filter((project) => project.id === projectId)
@@ -614,7 +969,10 @@ router.get("/lists", async (c) => {
   if (projectId && allowedProjects.length === 0) {
     return c.json({ error: "Project not found" }, 404);
   }
-  if (allowedProjects.length === 0) return c.json({ lists: [] });
+  if (allowedProjects.length === 0) {
+    console.log(`[keywords/lists:get] no projects for orgId="${orgId}" — returning empty lists`);
+    return c.json({ lists: [] });
+  }
 
   const projectIds = allowedProjects.map((project) => project.id);
   const projectMap = new Map(
@@ -625,6 +983,8 @@ router.get("/lists", async (c) => {
     where: inArray(keywordLists.projectId, projectIds),
     with: { items: { with: { keyword: true } } },
   });
+
+  console.log(`[keywords/lists:get] found ${lists.length} lists for projectIds=[${projectIds.join(", ")}]`);
 
   return c.json({
     lists: lists.map((list) => ({
@@ -649,16 +1009,23 @@ router.post(
     const db = getDb();
     const { name, projectId } = c.req.valid("json");
 
+    console.log(`[keywords/lists:post] orgId="${orgId}" projectId="${projectId ?? "none"}" name="${name}"`);
+
     const orgProjects = await db
       .select()
       .from(projects)
       .where(eq(projects.orgId, orgId));
 
+    console.log(`[keywords/lists:post] found ${orgProjects.length} org projects for orgId="${orgId}":`, orgProjects.map((p) => ({ id: p.id, name: p.name })));
+
     const project =
       (projectId ? orgProjects.find((item) => item.id === projectId) : undefined) ??
       orgProjects[0];
 
-    if (!project) return c.json({ error: "Project not found" }, 404);
+    if (!project) {
+      console.log(`[keywords/lists:post] no matching project — returning 404`);
+      return c.json({ error: "Project not found" }, 404);
+    }
 
     const [list] = await db
       .insert(keywordLists)
@@ -931,5 +1298,184 @@ router.get("/projects/:projectId/lists/:listId/export", async (c) => {
   c.header("Content-Disposition", `attachment; filename="${list.name.replace(/[^a-z0-9]/gi, "_")}.csv"`);
   return c.text(csv);
 });
+
+// ─── Enrich list (volume + KD + CPC + intent) ─────────────────────────────────
+
+router.post("/projects/:projectId/lists/:listId/enrich", async (c) => {
+  const orgId = c.get("orgId");
+  const db = getDb();
+  const { projectId, listId } = c.req.param();
+
+  const project = await db.query.projects.findFirst({
+    where: and(eq(projects.id, projectId), eq(projects.orgId, orgId)),
+  });
+  if (!project) return c.json({ error: "Project not found" }, 404);
+
+  const list = await db.query.keywordLists.findFirst({
+    where: and(eq(keywordLists.id, listId), eq(keywordLists.projectId, projectId)),
+    with: { items: { with: { keyword: true } } },
+  });
+  if (!list) return c.json({ error: "List not found" }, 404);
+  if (list.items.length === 0) {
+    return c.json({ enriched: 0, failed: 0 });
+  }
+
+  const locationCode = Number(list.items[0]!.keyword.locationCode || "2356");
+  const languageCode = list.items[0]!.keyword.languageCode || "en";
+  const uniqueKeywords = Array.from(new Set(list.items.map((i) => i.keyword.keyword)));
+
+  // Build volume + KD map (real or mocked)
+  type Enriched = { volume: number | null; cpc: number | null; kd: number | null };
+  const map = new Map<string, Enriched>();
+
+  try {
+    if (!hasCreds()) {
+      uniqueKeywords.forEach((kw, idx) => {
+        map.set(kw, {
+          volume: 300 + idx * 120,
+          cpc: Number((1.2 + (idx % 7)).toFixed(2)),
+          kd: 18 + ((idx * 7) % 80),
+        });
+      });
+    } else {
+      const dfs = getDataForSEO();
+      const [volRows, kdRows] = await Promise.allSettled([
+        dfs.keywords.getBulkVolume(uniqueKeywords, locationCode, languageCode),
+        dfs.labs.getBulkKeywordDifficulty(uniqueKeywords, locationCode, languageCode),
+      ]);
+      const vols = volRows.status === "fulfilled" ? volRows.value : [];
+      const kds = kdRows.status === "fulfilled" ? kdRows.value : [];
+      const volMap = new Map(vols.map((v) => [v.keyword.toLowerCase(), v]));
+      const kdMap = new Map(kds.map((k) => [k.keyword.toLowerCase(), k.keyword_difficulty]));
+      for (const kw of uniqueKeywords) {
+        const v = volMap.get(kw.toLowerCase());
+        map.set(kw, {
+          volume: v?.search_volume ?? null,
+          cpc: v?.cpc ?? null,
+          kd: kdMap.get(kw.toLowerCase()) ?? null,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[keywords/lists/enrich] fetch failed:", err);
+    return c.json({ error: "Failed to fetch enrichment data" }, 500);
+  }
+
+  // Persist per-item: update each keyword_list_items row in the list with its data
+  let enriched = 0;
+  let failed = 0;
+  await db.transaction(async (tx) => {
+    for (const item of list.items) {
+      const data = map.get(item.keyword.keyword);
+      if (!data) {
+        failed++;
+        continue;
+      }
+      await tx
+        .update(keywordListItems)
+        .set({
+          volume: data.volume ?? null,
+          kd: data.kd ?? null,
+          cpc: data.cpc ?? null,
+          intent: classifyIntent(item.keyword.keyword),
+        })
+        .where(eq(keywordListItems.id, item.id));
+      enriched++;
+    }
+    await tx
+      .update(keywordLists)
+      .set({ lastEnrichedAt: new Date() })
+      .where(eq(keywordLists.id, listId));
+  });
+
+  return c.json({ enriched, failed });
+});
+
+// ─── Move keywords between lists (same project) ───────────────────────────────
+
+router.post(
+  "/projects/:projectId/lists/:listId/move",
+  zValidator(
+    "json",
+    z.object({
+      keywordIds: z.array(z.string().min(1)).min(1).max(500),
+      targetListId: z.string().min(1),
+    })
+  ),
+  async (c) => {
+    const orgId = c.get("orgId");
+    const db = getDb();
+    const { projectId, listId } = c.req.param();
+    const { keywordIds, targetListId } = c.req.valid("json");
+
+    if (listId === targetListId) {
+      return c.json({ error: "Source and target lists are the same" }, 400);
+    }
+
+    const project = await db.query.projects.findFirst({
+      where: and(eq(projects.id, projectId), eq(projects.orgId, orgId)),
+    });
+    if (!project) return c.json({ error: "Project not found" }, 404);
+
+    const [sourceList, targetList] = await Promise.all([
+      db.query.keywordLists.findFirst({
+        where: and(eq(keywordLists.id, listId), eq(keywordLists.projectId, projectId)),
+      }),
+      db.query.keywordLists.findFirst({
+        where: and(eq(keywordLists.id, targetListId), eq(keywordLists.projectId, projectId)),
+      }),
+    ]);
+    if (!sourceList || !targetList) {
+      return c.json({ error: "List not found in this project" }, 404);
+    }
+
+    let moved = 0;
+    await db.transaction(async (tx) => {
+      // Fetch the source items that match the requested keywordIds
+      const sourceItems = await tx
+        .select()
+        .from(keywordListItems)
+        .where(
+          and(
+            eq(keywordListItems.listId, listId),
+            inArray(keywordListItems.keywordId, keywordIds)
+          )
+        );
+
+      if (sourceItems.length === 0) return;
+
+      // Find which keyword_ids are already present in the target list
+      const targetExisting = await tx
+        .select({ keywordId: keywordListItems.keywordId })
+        .from(keywordListItems)
+        .where(
+          and(
+            eq(keywordListItems.listId, targetListId),
+            inArray(
+              keywordListItems.keywordId,
+              sourceItems.map((i) => i.keywordId)
+            )
+          )
+        );
+      const targetSet = new Set(targetExisting.map((t) => t.keywordId));
+
+      for (const item of sourceItems) {
+        if (targetSet.has(item.keywordId)) {
+          // Already in target — just delete the source row
+          await tx.delete(keywordListItems).where(eq(keywordListItems.id, item.id));
+        } else {
+          // Move by updating list_id
+          await tx
+            .update(keywordListItems)
+            .set({ listId: targetListId })
+            .where(eq(keywordListItems.id, item.id));
+        }
+        moved++;
+      }
+    });
+
+    return c.json({ moved });
+  }
+);
 
 export default router;
