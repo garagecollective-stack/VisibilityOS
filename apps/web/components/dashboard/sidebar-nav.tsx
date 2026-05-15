@@ -36,6 +36,14 @@ const navItems = [
   { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
 ];
 
+// Shared class builders
+const itemBase = "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors border-l-2";
+const itemActive = "border-blue-500 bg-blue-600/20 font-medium text-white";
+const itemInactive = "border-transparent text-[#94A3B8] hover:text-white hover:bg-[#1E293B]";
+
+const iconActive = "h-4 w-4 shrink-0 text-white";
+const iconInactive = "h-4 w-4 shrink-0 text-[#94A3B8]";
+
 export function SidebarNav() {
   const pathname = usePathname();
   const keywordsActive = pathname.startsWith("/dashboard/keywords");
@@ -43,45 +51,45 @@ export function SidebarNav() {
 
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
+      {/* Dashboard */}
       {navItems.slice(0, 1).map((item) => {
         const isActive = item.exact ? pathname === item.href : pathname.startsWith(item.href);
         return (
           <Link
             key={item.href}
             href={item.href}
-            className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-              isActive
-                ? "bg-primary/10 font-medium text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
+            className={cn(itemBase, isActive ? itemActive : itemInactive)}
           >
-            <item.icon className="h-4 w-4 shrink-0" />
+            <item.icon className={isActive ? iconActive : iconInactive} />
             {item.label}
           </Link>
         );
       })}
 
+      {/* Keyword Research (expandable) */}
       <div className="space-y-0.5">
         <button
           type="button"
           onClick={() => setKeywordsOpen((open) => !open)}
           className={cn(
-            "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-            keywordsActive
-              ? "bg-primary/10 text-primary font-medium"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            "w-full",
+            itemBase,
+            keywordsActive ? itemActive : itemInactive
           )}
         >
-          <Search className="h-4 w-4 shrink-0" />
+          <Search className={keywordsActive ? iconActive : iconInactive} />
           <span className="flex-1 text-left">Keyword Research</span>
           <ChevronRight
-            className={cn("h-4 w-4 shrink-0 transition-transform", keywordsOpen && "rotate-90")}
+            className={cn(
+              "h-4 w-4 shrink-0 transition-transform",
+              keywordsActive ? "text-white" : "text-[#94A3B8]",
+              keywordsOpen && "rotate-90"
+            )}
           />
         </button>
 
         {keywordsOpen && (
-          <div className="ml-5 space-y-0.5 border-l border-border/80 pl-3">
+          <div className="ml-5 space-y-0.5 border-l border-white/[0.08] pl-3">
             {keywordChildren.map((item) => {
               const isActive = pathname === item.href;
               return (
@@ -89,10 +97,10 @@ export function SidebarNav() {
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    "block border-l-2 px-3 py-1.5 text-xs transition-colors",
+                    "block rounded-md border-l-2 px-3 py-1.5 text-xs transition-colors",
                     isActive
-                      ? "border-l-orange-500 font-semibold text-foreground"
-                      : "border-l-transparent text-muted-foreground hover:text-foreground"
+                      ? "border-blue-500 font-semibold text-white"
+                      : "border-transparent text-[#94A3B8] hover:text-white"
                   )}
                 >
                   {item.label}
@@ -103,20 +111,16 @@ export function SidebarNav() {
         )}
       </div>
 
+      {/* Remaining nav items */}
       {navItems.slice(1).map((item) => {
         const isActive = item.exact ? pathname === item.href : pathname.startsWith(item.href);
         return (
           <Link
             key={item.href}
             href={item.href}
-            className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-              isActive
-                ? "bg-primary/10 font-medium text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
+            className={cn(itemBase, isActive ? itemActive : itemInactive)}
           >
-            <item.icon className="h-4 w-4 shrink-0" />
+            <item.icon className={isActive ? iconActive : iconInactive} />
             {item.label}
           </Link>
         );

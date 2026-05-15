@@ -13,7 +13,12 @@
       "Bash(pkill -f \"next dev\")",
       "Read(//tmp/**)",
       "Bash(curl -s -o /dev/null -w \"sign-in: %{http_code}\\\\n\" http://localhost:3000/sign-in)",
-      "Bash(curl -s -o /dev/null -w \"sign-up: %{http_code}\\\\n\" http://localhost:3000/sign-up)"
+      "Bash(curl -s -o /dev/null -w \"sign-up: %{http_code}\\\\n\" http://localhost:3000/sign-up)",
+      "Bash(wsl bash *)",
+      "Bash(\"../../node_modules/.bin/drizzle-kit\" generate *)",
+      "Bash(node -e \"require\\('dotenv/config'\\); \")",
+      "Bash(node --require dotenv/config src/migrate.ts)",
+      "Bash(npx tsx *)"
     ]
   }
 }

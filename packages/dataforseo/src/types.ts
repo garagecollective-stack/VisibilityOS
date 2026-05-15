@@ -412,6 +412,62 @@ export interface CompetitorDomain {
   competitor_metrics: DomainMetrics["metrics"];
 }
 
+// ─── Labs / Site Keywords & Top Pages ─────────────────────────────────────────
+
+export interface SiteKeywordItem {
+  keyword: string;
+  location_code: number;
+  language_code: string;
+  keyword_info: {
+    search_volume: number | null;
+    competition: number | null;
+    competition_level: string | null;
+    cpc: number | null;
+    monthly_searches: Array<{ year: number; month: number; search_volume: number }> | null;
+  } | null;
+  keyword_properties: {
+    keyword_difficulty: number | null;
+  } | null;
+  ranked_serp_element: {
+    serp_item: {
+      rank_group: number;
+      rank_absolute: number;
+    };
+  } | null;
+  search_intent_info: {
+    main_intent: string | null;
+  } | null;
+}
+
+export interface RankedKeywordItem {
+  keyword_data: {
+    keyword: string;
+    keyword_info: {
+      search_volume: number | null;
+      cpc: number | null;
+    } | null;
+    keyword_properties: {
+      keyword_difficulty: number | null;
+    } | null;
+    search_intent_info: {
+      main_intent: string | null;
+    } | null;
+  };
+  ranked_serp_element: {
+    serp_item: {
+      rank_group: number;
+    };
+  } | null;
+}
+
+export interface TopPageItem {
+  page_address: string;
+  traffic: number | null;
+  keywords_count: number | null;
+  top_keyword: string | null;
+  top_position: number | null;
+}
+
 // ─── Client Config ─────────────────────────────────────────────────────────────
 
 export interface DataForSEOConfig {

@@ -7,3 +7,4 @@ export * from "./backlinks.js";
 export * from "./geo.js";
 export * from "./reports.js";
 export * from "./billing.js";
+export * from "./competitors.js";

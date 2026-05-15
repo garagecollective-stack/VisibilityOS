@@ -16,13 +16,13 @@ export interface MetricCardProps {
   className?: string;
 }
 
-const ACCENT_ICON: Record<NonNullable<MetricCardProps["accent"]>, string> = {
-  default: "text-muted-foreground",
-  green: "text-green-600 dark:text-green-400",
-  yellow: "text-yellow-600 dark:text-yellow-400",
-  red: "text-red-600 dark:text-red-400",
-  blue: "text-blue-600 dark:text-blue-400",
-  purple: "text-purple-600 dark:text-purple-400",
+const ACCENT_ICON_BG: Record<NonNullable<MetricCardProps["accent"]>, string> = {
+  default: "bg-muted text-muted-foreground",
+  green: "bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400",
+  yellow: "bg-yellow-50 text-yellow-600 dark:bg-yellow-900/20 dark:text-yellow-400",
+  red: "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400",
+  blue: "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400",
+  purple: "bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400",
 };
 
 export function MetricCard({
@@ -37,17 +37,30 @@ export function MetricCard({
   className,
 }: MetricCardProps) {
   return (
-    <Card className={cn("overflow-hidden", className)}>
-      <CardContent className="space-y-2 p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            {icon && <span className={ACCENT_ICON[accent]}>{icon}</span>}
-            <span>{label}</span>
-            {tooltip && <InfoTooltip content={tooltip} />}
+    <Card
+      className={cn(
+        "overflow-hidden card-shadow hover:card-shadow-hover transition-shadow",
+        className
+      )}
+    >
+      <CardContent className="space-y-3 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {icon && (
+              <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", ACCENT_ICON_BG[accent])}>
+                {icon}
+              </span>
+            )}
+            <div className="min-w-0">
+              <span className="text-xs font-medium text-muted-foreground leading-tight block truncate">{label}</span>
+            </div>
           </div>
-          {sampleData && <SampleDataBadge />}
+          <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
+            {tooltip && <InfoTooltip content={tooltip} />}
+            {sampleData && <SampleDataBadge />}
+          </div>
         </div>
-        <div className="text-2xl font-bold tabular-nums">{value}</div>
+        <div className="text-2xl font-bold tabular-nums tracking-tight">{value}</div>
         {(trend || hint) && (
           <div className="flex items-center gap-2 text-xs">
             {trend && <TrendPill value={trend.value} suffix={trend.suffix} />}
