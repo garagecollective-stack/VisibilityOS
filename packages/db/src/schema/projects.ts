@@ -12,6 +12,7 @@ import { auditRuns } from "./audit.js";
 import { backlinkSnapshots } from "./backlinks.js";
 import { geoPrompts } from "./geo.js";
 import { reports } from "./reports.js";
+import { competitors } from "./competitors.js";
 import { createId } from "../utils.js";
 
 export const projects = pgTable("projects", {
@@ -24,6 +25,12 @@ export const projects = pgTable("projects", {
   countryCode: text("country_code").notNull().default("IN"),
   languageCode: text("language_code").notNull().default("en"),
   gscConnected: boolean("gsc_connected").notNull().default(false),
+  gscRefreshToken: text("gsc_refresh_token"),
+  gscAccessToken: text("gsc_access_token"),
+  gscTokenExpiresAt: timestamp("gsc_token_expires_at"),
+  gscConnectedEmail: text("gsc_connected_email"),
+  gscPropertyUrl: text("gsc_property_url"),
+  gscLastSyncedAt: timestamp("gsc_last_synced_at"),
   ga4Connected: boolean("ga4_connected").notNull().default(false),
   settings: jsonb("settings").$type<ProjectSettings>().notNull().default({}),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -49,4 +56,5 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   backlinkSnapshots: many(backlinkSnapshots),
   geoPrompts: many(geoPrompts),
   reports: many(reports),
+  competitors: many(competitors),
 }));

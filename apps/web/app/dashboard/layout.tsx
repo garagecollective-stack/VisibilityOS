@@ -1,25 +1,26 @@
 import { UserButton, OrganizationSwitcher } from "@clerk/nextjs";
 import Link from "next/link";
-import { Settings } from "lucide-react";
+import { Settings, UserCircle } from "lucide-react";
 import { SidebarNav } from "@/components/dashboard/sidebar-nav";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
-      <aside className="w-60 border-r bg-card flex flex-col shrink-0">
+      <aside className="w-60 flex flex-col shrink-0 bg-[#0F172A] border-r border-white/[0.06]">
+
         {/* Brand */}
-        <div className="px-4 h-14 border-b flex items-center">
+        <div className="px-4 h-14 flex items-center border-b border-white/[0.06] shrink-0">
           <Link href="/dashboard" className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
-              <span className="text-primary-foreground font-bold text-xs">V</span>
+            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+              <span className="text-white font-bold text-xs">V</span>
             </div>
-            <span className="font-semibold text-sm">VisibilityOS</span>
+            <span className="font-semibold text-sm text-white">VisibilityOS</span>
           </Link>
         </div>
 
         {/* Org switcher */}
-        <div className="px-3 py-3 border-b">
+        <div className="px-3 py-3 border-b border-white/[0.06] shrink-0">
           <OrganizationSwitcher
             hidePersonal
             afterCreateOrganizationUrl="/dashboard"
@@ -28,7 +29,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               elements: {
                 rootBox: "w-full",
                 organizationSwitcherTrigger:
-                  "w-full justify-between rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent transition-colors",
+                  "w-full justify-between rounded-md px-3 py-2 text-sm text-[#94A3B8] hover:text-white hover:bg-[#1E293B] border border-white/[0.1] transition-colors bg-transparent",
+                organizationSwitcherTriggerIcon: "text-[#94A3B8]",
+                organizationPreviewMainIdentifier: "!text-white text-sm font-medium",
+                organizationPreviewSecondaryIdentifier: "!text-[#94A3B8] text-xs",
+                organizationPreviewAvatarBox: "w-5 h-5",
               },
             }}
           />
@@ -38,17 +43,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <SidebarNav />
 
         {/* Bottom */}
-        <div className="p-3 border-t space-y-0.5">
+        <div className="shrink-0 p-3 space-y-0.5 border-t border-white/[0.06]">
+          <Link
+            href="/dashboard/account"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors"
+          >
+            <UserCircle className="w-4 h-4 shrink-0" />
+            Account
+          </Link>
           <Link
             href="/dashboard/settings"
-            className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors"
           >
             <Settings className="w-4 h-4 shrink-0" />
             Settings
           </Link>
           <div className="flex items-center gap-3 px-3 py-2">
-            <UserButton afterSignOutUrl="/sign-in" />
-            <span className="text-sm text-muted-foreground">Account</span>
+            <UserButton
+              afterSignOutUrl="/sign-in"
+              appearance={{
+                elements: {
+                  avatarBox: "w-6 h-6",
+                },
+              }}
+            />
+            <span className="text-sm text-[#94A3B8]">Sign out</span>
           </div>
         </div>
       </aside>

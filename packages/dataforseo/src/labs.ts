@@ -1,6 +1,6 @@
 import type { DataForSEOClient } from "./client.js";
 import { makeCacheKey, withCache } from "./client.js";
-import type { DomainMetrics, CompetitorDomain, BulkKdItem, CacheConfig } from "./types.js";
+import type { DomainMetrics, CompetitorDomain, BulkKdItem, CacheConfig, SiteKeywordItem, RankedKeywordItem, TopPageItem } from "./types.js";
 
 export const CACHE_TTL_DOMAIN_METRICS = 86_400; // 24 hours
 
@@ -105,5 +105,74 @@ export class LabsClient {
       domains.map((domain) => ({ target: domain, location_code: locationCode, language_code: "en" }))
     );
     return (res.tasks[0]?.result as DomainMetrics[] | undefined) ?? [];
+  }
+
+  async getKeywordsForSite(
+    domain: string,
+    locationCode: number,
+    limit: number = 100
+  ): Promise<SiteKeywordItem[]> {
+    const params = { domain, location_code: locationCode, limit };
+
+    const fetcher = async () => {
+      const res = await this.client.post<{ items: SiteKeywordItem[] }>(
+        "/v3/dataforseo_labs/google/keywords_for_site/live",
+        [{ target: domain, location_code: locationCode, language_code: "en", limit }]
+      );
+      const result = res.tasks[0]?.result?.[0] as { items?: SiteKeywordItem[] } | undefined;
+      return result?.items ?? [];
+    };
+
+    if (this.cache) {
+      const key = makeCacheKey("labs/keywords_for_site", params);
+      return withCache(this.cache, key, 86_400, fetcher);
+    }
+    return fetcher();
+  }
+
+  async getRankedKeywords(
+    domain: string,
+    locationCode: number,
+    limit: number = 100
+  ): Promise<RankedKeywordItem[]> {
+    const params = { domain, location_code: locationCode, limit };
+
+    const fetcher = async () => {
+      const res = await this.client.post<{ items: RankedKeywordItem[] }>(
+        "/v3/dataforseo_labs/google/ranked_keywords/live",
+        [{ target: domain, location_code: locationCode, language_code: "en", limit }]
+      );
+      const result = res.tasks[0]?.result?.[0] as { items?: RankedKeywordItem[] } | undefined;
+      return result?.items ?? [];
+    };
+
+    if (this.cache) {
+      const key = makeCacheKey("labs/ranked_keywords", params);
+      return withCache(this.cache, key, 86_400, fetcher);
+    }
+    return fetcher();
+  }
+
+  async getTopPages(
+    domain: string,
+    locationCode: number,
+    limit: number = 20
+  ): Promise<TopPageItem[]> {
+    const params = { domain, location_code: locationCode, limit };
+
+    const fetcher = async () => {
+      const res = await this.client.post<{ items: TopPageItem[] }>(
+        "/v3/dataforseo_labs/google/top_pages/live",
+        [{ target: domain, location_code: locationCode, language_code: "en", limit }]
+      );
+      const result = res.tasks[0]?.result?.[0] as { items?: TopPageItem[] } | undefined;
+      return result?.items ?? [];
+    };
+
+    if (this.cache) {
+      const key = makeCacheKey("labs/top_pages", params);
+      return withCache(this.cache, key, 86_400, fetcher);
+    }
+    return fetcher();
   }
 }

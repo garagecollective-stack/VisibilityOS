@@ -1,19 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Eye,
-  FolderOpen,
-  Globe,
-  Link2,
-  Plus,
-  Search,
-  ShieldCheck,
-  Target,
-  TrendingUp,
-} from "lucide-react";
+import { ExternalLink, FolderOpen, Globe, Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -33,22 +23,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MetricCard } from "@/components/shared/metric-card";
 import { DashboardProjectSelector } from "@/components/dashboard/project-selector";
-import { RankMovementsChart } from "@/components/dashboard/rank-movements-chart";
-import { TopMoversTable } from "@/components/dashboard/top-movers-table";
-import { RecentAlerts } from "@/components/dashboard/recent-alerts";
-import { ProjectHealthCard } from "@/components/dashboard/project-health-card";
-import { QuickActionsCard } from "@/components/dashboard/quick-actions-card";
-import { GscConnectionCard } from "@/components/dashboard/gsc-connection-card";
-import { IssuesSummary } from "@/components/dashboard/issues-summary";
-import { CompetitorSnapshot } from "@/components/dashboard/competitor-snapshot";
-import { KeywordDistributionCard } from "@/components/dashboard/keyword-distribution";
-import { KeywordChangesCard } from "@/components/dashboard/keyword-changes";
-import { TopPagesCard } from "@/components/dashboard/top-pages";
-import type { TopPage } from "@/components/dashboard/top-pages";
+import { DomainAnalyticsWidget } from "@/components/dashboard/domain-analytics-widget";
+import { PositionTrackingWidget } from "@/components/dashboard/position-tracking-widget";
+import { SiteAuditWidget } from "@/components/dashboard/site-audit-widget";
+import {
+  AlertsWidget,
+  IssuesOverviewWidget,
+  QuickActionsWidget,
+  QuickStatsWidget,
+} from "@/components/dashboard/dashboard-sidebar";
 import { apiClient } from "@/lib/api";
 import { ssGet, ssSet } from "@/lib/session-store";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const COUNTRIES = [
   { code: "IN", label: "India" },
@@ -69,6 +57,8 @@ const COUNTRIES = [
   { code: "ZA", label: "South Africa" },
   { code: "NG", label: "Nigeria" },
 ] as const;
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Project {
   id: string;
@@ -114,8 +104,28 @@ interface DashboardData {
   pagesCrawled: number;
   keywordDistribution: Record<string, number>;
   keywordChanges: { newKeywords: number; lostKeywords: number };
-  topPages: TopPage[];
+  topPages: Array<{ url: string; position: number; kwCount: number }>;
 }
+
+// ── Sample visibility points (when no real data) ──────────────────────────────
+
+function generateSamplePoints(): VisibilityPoint[] {
+  const out: VisibilityPoint[] = [];
+  let base = 42;
+  for (let i = 29; i >= 0; i--) {
+    const day = new Date();
+    day.setDate(day.getDate() - i);
+    base += (Math.random() - 0.35) * 4;
+    base = Math.max(15, Math.min(90, base));
+    out.push({
+      date: day.toISOString().split("T")[0]!,
+      visibility_score: Math.round(base * 10) / 10,
+    });
+  }
+  return out;
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const { getToken } = useAuth();
@@ -128,6 +138,8 @@ export default function DashboardPage() {
   const [countryCode, setCountryCode] = useState("IN");
   const [domainError, setDomainError] = useState("");
 
+  // ── Data fetching (unchanged) ───────────────────────────────────────────────
+
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: async () => {
@@ -138,9 +150,6 @@ export default function DashboardPage() {
 
   const projects = projectsQuery.data?.projects ?? [];
 
-  // Restore selected project from localStorage exactly once after projects load.
-  // Keeping `selectedProjectId` in deps caused this to fight effect#2 below
-  // and reverted user clicks back to the stored value — infinite re-render.
   const initializedRef = useRef(false);
   useEffect(() => {
     if (initializedRef.current || projects.length === 0) return;
@@ -214,6 +223,18 @@ export default function DashboardPage() {
   const latestVisibility = visibilityQuery.data?.visibility?.[0]?.visibility_score ?? null;
   const dashData = dashboardQuery.data;
 
+  // ── Derived values ──────────────────────────────────────────────────────────
+
+  const visibilityPoints = useMemo(() => {
+    const real = visibilityQuery.data?.visibility ?? [];
+    return real.length > 0 ? [...real].reverse() : generateSamplePoints();
+  }, [visibilityQuery.data]);
+
+  const isSampleVisibility = (visibilityQuery.data?.visibility ?? []).length === 0;
+  const isSampleDomain = dashData?.backlinks.domainAuthority == null;
+
+  // ── Mutations ───────────────────────────────────────────────────────────────
+
   const createMutation = useMutation({
     mutationFn: async () => {
       const token = await getToken();
@@ -264,222 +285,150 @@ export default function DashboardPage() {
 
   const isLoading = projectsQuery.isLoading;
 
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
-    <div className="space-y-6 p-6">
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Overview of your SEO performance across keywords, audits, and competitors.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {!isLoading && projects.length > 0 && (
+    <div className="min-h-screen" style={{ backgroundColor: "#F8F9FA" }}>
+      {/* ── Project header bar ── */}
+      <div
+        className="flex items-center justify-between gap-4 bg-white px-6 py-3"
+        style={{ borderBottom: "1px solid #F0F0F5" }}
+      >
+        {/* Left — project selector + domain */}
+        <div className="flex items-center gap-4 min-w-0">
+          {isLoading ? (
+            <Skeleton className="h-9 w-64" />
+          ) : projects.length > 0 ? (
             <DashboardProjectSelector
               projects={projects}
               value={selectedProjectId}
               onValueChange={setSelectedProjectId}
             />
+          ) : null}
+
+          {selectedProject && (
+            <a
+              href={`https://${selectedProject.domain}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:flex items-center gap-1.5 text-sm hover:underline truncate"
+              style={{ color: "#6B7280" }}
+            >
+              <Globe className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{selectedProject.domain}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
           )}
-          {!isLoading && projects.length > 0 && (
-            <Button onClick={openDialog}>
-              <Plus className="mr-2 h-4 w-4" />
+        </div>
+
+        {/* Right — actions */}
+        <div className="flex items-center gap-2 shrink-0">
+          {projects.length > 0 && (
+            <Button size="sm" onClick={openDialog}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
               Add Project
             </Button>
           )}
+          <Button size="sm" variant="ghost" asChild>
+            <a href="/dashboard/settings" aria-label="Settings">
+              <Settings className="h-4 w-4" />
+            </a>
+          </Button>
         </div>
       </div>
 
-      {/* Loading */}
-      {isLoading && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-lg" />
-          ))}
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!isLoading && projects.length === 0 && (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="mb-4 rounded-full bg-muted p-4">
-              <FolderOpen className="h-8 w-8 text-muted-foreground" />
+      {/* ── Content ── */}
+      <div className="p-6 space-y-4">
+        {/* Loading skeletons */}
+        {isLoading && (
+          <div className="grid grid-cols-10 gap-4">
+            <div className="col-span-7 space-y-4">
+              <Skeleton className="h-32 w-full rounded-lg" />
+              <Skeleton className="h-80 w-full rounded-lg" />
+              <Skeleton className="h-48 w-full rounded-lg" />
             </div>
-            <h2 className="text-lg font-semibold">No projects yet</h2>
-            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              Create your first project to start tracking keywords, running audits, and measuring SEO performance.
-            </p>
-            <Button className="mt-6" onClick={openDialog}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Your First Project
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Main */}
-      {!isLoading && selectedProject && (
-        <>
-          {/* Top stats row — 6 cards */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            <MetricCard
-              label="Overall Health Score"
-              icon={<ShieldCheck className="h-4 w-4" />}
-              value={latestCompletedAudit?.technicalScore ?? "—"}
-              hint={
-                latestCompletedAudit?.technicalScore != null
-                  ? scoreHint(latestCompletedAudit.technicalScore)
-                  : "Run an audit"
-              }
-              accent={accentForScore(latestCompletedAudit?.technicalScore ?? null)}
-              tooltip="Composite SEO health score (0–100) based on your most recent site audit."
-            />
-            <MetricCard
-              label="Tracked Keywords"
-              icon={<Target className="h-4 w-4" />}
-              value={trackedCount}
-              trend={trackedCount > 0 ? { value: 12 } : null}
-              hint="vs last week"
-              accent="blue"
-              sampleData={trackedCount > 0}
-              tooltip="Total number of keywords being tracked across this project."
-            />
-            <MetricCard
-              label="Average Position"
-              icon={<TrendingUp className="h-4 w-4" />}
-              value={trackedCount > 0 ? "14.8" : "—"}
-              trend={trackedCount > 0 ? { value: -1.2 } : null}
-              hint={trackedCount > 0 ? "Lower is better" : "No data yet"}
-              accent="default"
-              sampleData={trackedCount > 0}
-              tooltip="Mean Google search position across all tracked keywords."
-            />
-            <MetricCard
-              label="Visibility Score"
-              icon={<Eye className="h-4 w-4" />}
-              value={latestVisibility != null ? latestVisibility.toFixed(1) : "—"}
-              trend={latestVisibility != null ? { value: 2.4 } : null}
-              hint="Organic share of voice"
-              accent="purple"
-              sampleData={latestVisibility == null}
-              tooltip="A 0–100 estimate of your share of organic search traffic for tracked keywords."
-            />
-            <MetricCard
-              label="Referring Domains"
-              icon={<Link2 className="h-4 w-4" />}
-              value={dashData?.backlinks.referringDomains ?? "—"}
-              trend={
-                dashData?.backlinks.referringDomainsDelta != null
-                  ? { value: dashData.backlinks.referringDomainsDelta }
-                  : null
-              }
-              hint={dashData?.backlinks.referringDomains != null ? "unique linking domains" : "No data yet"}
-              accent={
-                dashData?.backlinks.referringDomains == null
-                  ? "default"
-                  : dashData.backlinks.referringDomains >= 50
-                  ? "green"
-                  : dashData.backlinks.referringDomains >= 10
-                  ? "blue"
-                  : "yellow"
-              }
-              sampleData={dashData?.backlinks.referringDomains == null}
-              tooltip="Number of unique domains linking to your site."
-            />
-            <MetricCard
-              label="Domain Authority"
-              icon={<Globe className="h-4 w-4" />}
-              value={dashData?.backlinks.domainAuthority ?? "—"}
-              hint={dashData?.backlinks.domainAuthority != null ? "DataForSEO domain rank" : "No data yet"}
-              accent={
-                dashData?.backlinks.domainAuthority == null
-                  ? "default"
-                  : dashData.backlinks.domainAuthority >= 50
-                  ? "green"
-                  : dashData.backlinks.domainAuthority >= 30
-                  ? "yellow"
-                  : "red"
-              }
-              sampleData={dashData?.backlinks.domainAuthority == null}
-              tooltip="Domain authority score (0–100) from DataForSEO. Higher is stronger."
-            />
+            <div className="col-span-3 space-y-4">
+              <Skeleton className="h-40 w-full rounded-lg" />
+              <Skeleton className="h-56 w-full rounded-lg" />
+              <Skeleton className="h-40 w-full rounded-lg" />
+              <Skeleton className="h-40 w-full rounded-lg" />
+            </div>
           </div>
+        )}
 
-          {/* Main grid 60/40 */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-            <div className="space-y-4 lg:col-span-3">
-              <RankMovementsChart projectId={selectedProjectId} />
-              <TopMoversTable projectId={selectedProjectId} />
-              <KeywordDistributionCard
-                distribution={dashData?.keywordDistribution ?? {}}
-                isSample={!dashData || Object.keys(dashData.keywordDistribution).length === 0}
+        {/* Empty state */}
+        {!isLoading && projects.length === 0 && (
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                <FolderOpen className="h-8 w-8 text-primary" />
+              </div>
+              <h2 className="text-lg font-semibold">No projects yet</h2>
+              <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
+                Create your first project to start tracking keywords, running audits, and measuring SEO performance.
+              </p>
+              <Button className="mt-6" onClick={openDialog}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Your First Project
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Main 70/30 layout ── */}
+        {!isLoading && selectedProject && (
+          <div className="grid grid-cols-10 gap-4 items-start">
+            {/* LEFT — 7 cols (70%) */}
+            <div className="col-span-10 lg:col-span-7 space-y-4">
+              {/* Widget 1 — Domain Analytics */}
+              <DomainAnalyticsWidget
+                domainAuthority={dashData?.backlinks.domainAuthority ?? null}
+                referringDomains={dashData?.backlinks.referringDomains ?? null}
+                referringDomainsDelta={dashData?.backlinks.referringDomainsDelta ?? null}
+                totalBacklinks={dashData?.backlinks.totalBacklinks ?? null}
+                trackedKeywords={trackedCount}
+                isSample={isSampleDomain}
               />
-              <TopPagesCard
-                pages={dashData?.topPages ?? []}
-                isSample={!dashData || dashData.topPages.length === 0}
+
+              {/* Widget 2 — Position Tracking */}
+              <PositionTrackingWidget
+                visibility={visibilityPoints}
+                keywordDistribution={dashData?.keywordDistribution ?? {}}
+                latestVisibility={latestVisibility}
+                isSample={isSampleVisibility}
               />
-              <RecentAlerts />
+
+              {/* Widget 3 — Site Audit */}
+              <SiteAuditWidget
+                latestRun={latestCompletedAudit}
+                pagesWithIssues={dashData?.pagesWithIssues ?? 0}
+              />
             </div>
-            <div className="space-y-4 lg:col-span-2">
-              <ProjectHealthCard
-                domain={selectedProject.domain}
-                countryCode={selectedProject.countryCode}
-                technicalScore={latestCompletedAudit?.technicalScore ?? null}
-                keywordsScore={null}
-                backlinksScore={null}
-                contentScore={dashData?.contentScore ?? null}
+
+            {/* RIGHT — 3 cols (30%), sticky */}
+            <div className="col-span-10 lg:col-span-3 space-y-4 lg:sticky lg:top-4">
+              <QuickStatsWidget
+                domainAuthority={dashData?.backlinks.domainAuthority ?? null}
+                referringDomains={dashData?.backlinks.referringDomains ?? null}
+                totalBacklinks={dashData?.backlinks.totalBacklinks ?? null}
+                trackedKeywords={trackedCount}
               />
-              <KeywordChangesCard
-                newKeywords={dashData?.keywordChanges.newKeywords ?? 0}
-                lostKeywords={dashData?.keywordChanges.lostKeywords ?? 0}
-                isSample={!dashData}
-              />
-              <QuickActionsCard
+              <AlertsWidget />
+              <IssuesOverviewWidget
+                criticalIssues={latestCompletedAudit?.criticalIssues ?? 0}
+                warnings={latestCompletedAudit?.warnings ?? 0}
+                notices={latestCompletedAudit?.notices ?? 0}
                 hasAudit={!!latestCompletedAudit}
-                hasKeywords={trackedCount > 0}
-                lastBacklinkCheck={dashData?.backlinks.lastCheckedAt ?? null}
+                latestRunId={latestCompletedAudit?.id}
               />
-              <GscConnectionCard connected={!!selectedProject.gscConnected} />
+              <QuickActionsWidget />
             </div>
           </div>
+        )}
+      </div>
 
-          {/* Bottom row */}
-          <IssuesSummary
-            hasAudit={!!latestCompletedAudit}
-            criticalIssues={latestCompletedAudit?.criticalIssues ?? 0}
-            warnings={latestCompletedAudit?.warnings ?? 0}
-            notices={latestCompletedAudit?.notices ?? 0}
-            pagesCrawled={dashData?.pagesCrawled ?? latestCompletedAudit?.pagesCrawled ?? 0}
-            pagesWithIssues={dashData?.pagesWithIssues ?? 0}
-          />
-
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <CompetitorSnapshot competitors={selectedProject.settings?.competitors ?? []} />
-            <Card className="border-dashed">
-              <CardContent className="flex h-full flex-col items-center justify-center py-10 text-center">
-                <Search className="mb-3 h-8 w-8 text-muted-foreground/40" />
-                <p className="font-medium">Keyword Opportunities</p>
-                <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                  Discover new keywords you don't yet track from Search Console and SERP analysis.
-                </p>
-                <Button asChild variant="outline" className="mt-4">
-                  <a href="/dashboard/keywords/ideas">Explore Ideas</a>
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        </>
-      )}
-
-      {/* Add Project dialog */}
-      <Dialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          if (!open) closeDialog();
-        }}
-      >
+      {/* ── Add Project dialog (unchanged) ── */}
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) closeDialog(); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Add Project</DialogTitle>
@@ -535,9 +484,7 @@ export default function DashboardPage() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={closeDialog}>
-              Cancel
-            </Button>
+            <Button variant="outline" onClick={closeDialog}>Cancel</Button>
             <Button onClick={() => createMutation.mutate()} disabled={!canSubmit}>
               {createMutation.isPending ? "Creating..." : "Create Project"}
             </Button>
@@ -546,19 +493,4 @@ export default function DashboardPage() {
       </Dialog>
     </div>
   );
-}
-
-function scoreHint(score: number): string {
-  if (score >= 90) return "Excellent";
-  if (score >= 70) return "Good";
-  if (score >= 50) return "Needs work";
-  return "Critical";
-}
-
-function accentForScore(score: number | null): "green" | "yellow" | "red" | "blue" | "default" {
-  if (score === null) return "default";
-  if (score >= 90) return "green";
-  if (score >= 70) return "blue";
-  if (score >= 50) return "yellow";
-  return "red";
 }

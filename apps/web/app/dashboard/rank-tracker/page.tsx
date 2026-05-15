@@ -17,6 +17,7 @@ import {
 import {
   ArrowDownRight,
   ArrowUpRight,
+  Clock,
   ExternalLink,
   Eye,
   HelpCircle,
@@ -36,11 +37,16 @@ import {
   X,
 } from "lucide-react";
 import { CountrySelector } from "@/components/shared/country-selector";
-import { DeviceToggle, type Device } from "@/components/shared/device-toggle";
 import { MetricCard } from "@/components/shared/metric-card";
 import { SampleDataBadge } from "@/components/shared/sample-data-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -61,9 +67,11 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { apiClient } from "@/lib/api";
-import { formatMetric, KEYWORD_LOCATIONS } from "@/lib/keywords";
+import { KEYWORD_LOCATIONS } from "@/lib/keywords";
 import { ssGet, ssSet } from "@/lib/session-store";
 import { cn } from "@/lib/utils";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 type Project = {
   id: string;
@@ -72,25 +80,20 @@ type Project = {
   countryCode: string;
 };
 
-type TrackedKeyword = {
+type TrackedWithPosition = {
   id: string;
-  projectId: string;
   keyword: string;
   locationCode: string;
   languageCode: string;
   device: string;
-  isActive: boolean;
-  createdAt: string;
-};
-
-type RankAggregate = {
-  keyword_id: string;
-  keyword: string;
-  current_position: number;
-  best_position: number;
-  worst_position: number;
-  data_points: number;
-  last_checked: string;
+  currentPosition: number | null;
+  previousPosition: number | null;
+  change: number | null;
+  bestPosition: number | null;
+  url: string | null;
+  serpFeatures: string[];
+  lastCheckedAt: string | null;
+  hasData: boolean;
 };
 
 type VisibilityPoint = { date: string; visibility_score: number; estimated_traffic: number };
@@ -102,6 +105,8 @@ type PositionBucket = "all" | "top3" | "top10" | "top100" | "not_ranking";
 type ChangeBucket = "all" | "improved" | "declined" | "no_change";
 type DeviceFilter = "all" | "desktop" | "mobile";
 
+const PAGE_SIZE = 25;
+
 const SERP_FEATURE_ICONS: Record<string, { icon: React.ComponentType<{ className?: string }>; label: string }> = {
   featured_snippet: { icon: Star, label: "Featured Snippet" },
   people_also_ask: { icon: HelpCircle, label: "People Also Ask" },
@@ -112,46 +117,12 @@ const SERP_FEATURE_ICONS: Record<string, { icon: React.ComponentType<{ className
   ai_overview: { icon: Sparkles, label: "AI Overview" },
 };
 
-// ── Mock helpers ─────────────────────────────────────────────────────────────
+const SAMPLE_COMPETITORS = [
+  "wikipedia.org", "moz.com", "ahrefs.com", "semrush.com", "backlinko.com",
+  "neilpatel.com", "searchenginejournal.com", "wordstream.com", "hubspot.com", "yoast.com",
+];
 
-function seedFromString(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-function mockRowForKeyword(keyword: string): {
-  current_position: number;
-  previous_position: number;
-  best_position: number;
-  volume: number;
-  cpc: number;
-  url: string;
-  serp_features: string[];
-} {
-  const seed = seedFromString(keyword);
-  const currentPosition = (seed % 80) + 1;
-  const delta = (seed % 21) - 10;
-  const previousPosition = Math.max(1, Math.min(100, currentPosition + delta));
-  const bestPosition = Math.max(1, currentPosition - (seed % 8));
-  const volume = 200 + (seed % 18_000);
-  const cpc = Math.round((0.5 + ((seed % 500) / 100)) * 100) / 100;
-  const url = `https://example.com/${keyword.replace(/\s+/g, "-").toLowerCase()}`;
-  const features: string[] = [];
-  if (seed % 3 === 0) features.push("featured_snippet");
-  if (seed % 5 === 0) features.push("people_also_ask");
-  if (seed % 7 === 0) features.push("sitelinks");
-  if (seed % 11 === 0) features.push("ai_overview");
-  return {
-    current_position: currentPosition,
-    previous_position: previousPosition,
-    best_position: bestPosition,
-    volume,
-    cpc,
-    url,
-    serp_features: features,
-  };
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function mockVisibilitySeries(days: number): VisibilityPoint[] {
   const out: VisibilityPoint[] = [];
@@ -162,7 +133,7 @@ function mockVisibilitySeries(days: number): VisibilityPoint[] {
     base += (Math.sin(i / 6) + (Math.random() - 0.45)) * 1.6;
     base = Math.max(15, Math.min(90, base));
     out.push({
-      date: d.toISOString().split("T")[0],
+      date: d.toISOString().split("T")[0]!,
       visibility_score: Math.round(base * 10) / 10,
       estimated_traffic: Math.round(120 + base * 22),
     });
@@ -170,32 +141,24 @@ function mockVisibilitySeries(days: number): VisibilityPoint[] {
   return out;
 }
 
-function mockKeywordHistory(keyword: string, days: number): Array<{ date: string; position: number }> {
-  const out: Array<{ date: string; position: number }> = [];
-  const seed = seedFromString(keyword);
-  let pos = mockRowForKeyword(keyword).current_position;
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    pos += ((seed + i * 7) % 11) - 5;
-    pos = Math.max(1, Math.min(100, pos));
-    out.push({ date: d.toISOString().split("T")[0], position: pos });
-  }
-  return out;
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
-const SAMPLE_COMPETITORS = [
-  "wikipedia.org",
-  "moz.com",
-  "ahrefs.com",
-  "semrush.com",
-  "backlinko.com",
-  "neilpatel.com",
-  "searchenginejournal.com",
-  "wordstream.com",
-  "hubspot.com",
-  "yoast.com",
-];
+function prettyUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.pathname.length > 1 ? u.pathname : u.hostname;
+  } catch {
+    return url;
+  }
+}
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -208,7 +171,9 @@ export default function RankTrackerPage() {
   const [posBucket, setPosBucket] = useState<PositionBucket>("all");
   const [changeBucket, setChangeBucket] = useState<ChangeBucket>("all");
   const [deviceFilter, setDeviceFilter] = useState<DeviceFilter>("all");
-  const [detailKeyword, setDetailKeyword] = useState<TrackedKeyword | null>(null);
+  const [detailKeyword, setDetailKeyword] = useState<TrackedWithPosition | null>(null);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [page, setPage] = useState(1);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -220,9 +185,6 @@ export default function RankTrackerPage() {
 
   const projects = projectsQuery.data?.projects ?? [];
 
-  // Restore from localStorage exactly once after projects load. Keeping
-  // `selectedProjectId` in deps fought the save effect and looped infinitely
-  // whenever the user picked a different project.
   const initializedRef = useRef(false);
   useEffect(() => {
     if (initializedRef.current || projects.length === 0) return;
@@ -236,18 +198,21 @@ export default function RankTrackerPage() {
     if (selectedProjectId) ssSet("rankTrackerProject", selectedProjectId);
   }, [selectedProjectId]);
 
+  useEffect(() => { setPage(1); }, [search, posBucket, changeBucket, deviceFilter]);
+
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
 
-  const trackedQuery = useQuery({
-    queryKey: ["trackedKeywords", selectedProjectId],
+  const twpQuery = useQuery({
+    queryKey: ["tracked-with-positions", selectedProjectId],
     queryFn: async () => {
       const token = await getToken();
-      return apiClient<{ keywords: TrackedKeyword[] }>(
-        `/keywords/projects/${selectedProjectId}/tracked`,
+      return apiClient<{ keywords: TrackedWithPosition[] }>(
+        `/rank/projects/${selectedProjectId}/tracked-with-positions`,
         { token: token ?? undefined }
       );
     },
     enabled: !!selectedProjectId,
+    retry: false,
   });
 
   const visibilityQuery = useQuery({
@@ -263,50 +228,19 @@ export default function RankTrackerPage() {
     retry: false,
   });
 
-  const historyQuery = useQuery({
-    queryKey: ["rank-history-rt", selectedProjectId, days],
-    queryFn: async () => {
-      const token = await getToken();
-      return apiClient<{ history: RankAggregate[] }>(
-        `/rank/projects/${selectedProjectId}/history?days=${days}`,
-        { token: token ?? undefined }
-      );
-    },
-    enabled: !!selectedProjectId,
-    retry: false,
-  });
+  const tracked = twpQuery.data?.keywords ?? [];
+  const hasAnyData = tracked.some((k) => k.hasData);
 
-  const tracked = trackedQuery.data?.keywords ?? [];
-  const realHistory = historyQuery.data?.history ?? [];
-  const historyByKeywordId = useMemo(
-    () => new Map(realHistory.map((h) => [h.keyword_id, h])),
-    [realHistory]
+  const lastCheckedAt = useMemo(
+    () =>
+      tracked.reduce<string | null>((latest, kw) => {
+        if (!kw.lastCheckedAt) return latest;
+        if (!latest) return kw.lastCheckedAt;
+        return kw.lastCheckedAt > latest ? kw.lastCheckedAt : latest;
+      }, null),
+    [tracked]
   );
 
-  // Merge tracked with rank data (real where available, mock otherwise)
-  const rows = useMemo(() => {
-    return tracked.map((kw) => {
-      const real = historyByKeywordId.get(kw.id);
-      const mock = mockRowForKeyword(kw.keyword);
-      const currentPosition = real?.current_position ?? mock.current_position;
-      const bestPosition = real?.best_position ?? mock.best_position;
-      const previousPosition = mock.previous_position;
-      const change = previousPosition - currentPosition;
-      return {
-        ...kw,
-        current_position: currentPosition,
-        best_position: bestPosition,
-        change,
-        volume: mock.volume,
-        cpc: mock.cpc,
-        url: mock.url,
-        serp_features: mock.serp_features,
-        is_real: !!real,
-      };
-    });
-  }, [tracked, historyByKeywordId]);
-
-  const usingMockHistory = realHistory.length === 0 && tracked.length > 0;
   const realVisibility = visibilityQuery.data?.visibility ?? [];
   const visibility = useMemo(
     () =>
@@ -318,28 +252,33 @@ export default function RankTrackerPage() {
   const usingMockVisibility = realVisibility.length === 0;
 
   const latestVisibility = visibility.length > 0 ? visibility[visibility.length - 1]!.visibility_score : 0;
-  const top3Count = rows.filter((r) => r.current_position <= 3).length;
-  const top10Count = rows.filter((r) => r.current_position <= 10).length;
-  const top100Count = rows.filter((r) => r.current_position <= 100).length;
-  const avgPos = rows.length
-    ? Math.round((rows.reduce((s, r) => s + r.current_position, 0) / rows.length) * 10) / 10
-    : 0;
 
-  // Filtered rows for table
+  const top3Count = tracked.filter((r) => r.currentPosition !== null && r.currentPosition <= 3).length;
+  const top10Count = tracked.filter((r) => r.currentPosition !== null && r.currentPosition <= 10).length;
+  const top100Count = tracked.filter((r) => r.currentPosition !== null && r.currentPosition <= 100).length;
+  const avgPos = (() => {
+    const withData = tracked.filter((r) => r.currentPosition !== null);
+    if (!withData.length) return null;
+    return Math.round((withData.reduce((s, r) => s + r.currentPosition!, 0) / withData.length) * 10) / 10;
+  })();
+
   const filteredRows = useMemo(() => {
-    return rows.filter((r) => {
+    return tracked.filter((r) => {
       if (search && !r.keyword.toLowerCase().includes(search.toLowerCase())) return false;
-      if (posBucket === "top3" && r.current_position > 3) return false;
-      if (posBucket === "top10" && r.current_position > 10) return false;
-      if (posBucket === "top100" && r.current_position > 100) return false;
-      if (posBucket === "not_ranking" && r.current_position <= 100) return false;
-      if (changeBucket === "improved" && r.change <= 0) return false;
-      if (changeBucket === "declined" && r.change >= 0) return false;
+      if (posBucket === "top3" && (r.currentPosition === null || r.currentPosition > 3)) return false;
+      if (posBucket === "top10" && (r.currentPosition === null || r.currentPosition > 10)) return false;
+      if (posBucket === "top100" && (r.currentPosition === null || r.currentPosition > 100)) return false;
+      if (posBucket === "not_ranking" && r.currentPosition !== null && r.currentPosition <= 100) return false;
+      if (changeBucket === "improved" && (r.change === null || r.change <= 0)) return false;
+      if (changeBucket === "declined" && (r.change === null || r.change >= 0)) return false;
       if (changeBucket === "no_change" && r.change !== 0) return false;
       if (deviceFilter !== "all" && r.device !== deviceFilter) return false;
       return true;
     });
-  }, [rows, search, posBucket, changeBucket, deviceFilter]);
+  }, [tracked, search, posBucket, changeBucket, deviceFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const pagedRows = filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const deleteMutation = useMutation({
     mutationFn: async (keywordId: string) => {
@@ -350,7 +289,7 @@ export default function RankTrackerPage() {
       );
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["trackedKeywords", selectedProjectId] });
+      await queryClient.invalidateQueries({ queryKey: ["tracked-with-positions", selectedProjectId] });
     },
   });
 
@@ -364,7 +303,11 @@ export default function RankTrackerPage() {
     },
   });
 
-  const isLoading = projectsQuery.isLoading || (!!selectedProjectId && trackedQuery.isLoading);
+  const isLoading = projectsQuery.isLoading || (!!selectedProjectId && twpQuery.isLoading);
+
+  const invalidateTracked = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["tracked-with-positions", selectedProjectId] });
+  };
 
   return (
     <div className="space-y-6 p-6">
@@ -393,18 +336,38 @@ export default function RankTrackerPage() {
             </Select>
           )}
           {selectedProjectId && tracked.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => checkNowMutation.mutate()}
-              disabled={checkNowMutation.isPending}
-            >
-              <RotateCw className={cn("mr-1.5 h-3.5 w-3.5", checkNowMutation.isPending && "animate-spin")} />
-              {checkNowMutation.isPending ? "Queuing…" : "Check Now"}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAddDialogOpen(true)}
+              >
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add Keywords
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => checkNowMutation.mutate()}
+                disabled={checkNowMutation.isPending}
+              >
+                <RotateCw className={cn("mr-1.5 h-3.5 w-3.5", checkNowMutation.isPending && "animate-spin")} />
+                {checkNowMutation.isPending ? "Queuing…" : "Check Now"}
+              </Button>
+            </>
           )}
         </div>
       </div>
+
+      {/* Daily check indicator */}
+      {tracked.length > 0 && (
+        <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <Clock className="h-3.5 w-3.5 shrink-0" />
+          {lastCheckedAt
+            ? `Last checked: ${timeAgo(lastCheckedAt)} · Checks run daily`
+            : "No checks run yet · Checks run daily at ~3:00 AM UTC"}
+        </div>
+      )}
 
       {/* Loading */}
       {isLoading && (
@@ -425,56 +388,61 @@ export default function RankTrackerPage() {
       )}
 
       {/* Setup state — no tracked keywords yet */}
-      {!isLoading && selectedProject && tracked.length === 0 && (
-        <SetupForm
-          project={selectedProject}
-          onAdded={async () => {
-            await queryClient.invalidateQueries({
-              queryKey: ["trackedKeywords", selectedProjectId],
-            });
-          }}
-        />
+      {!isLoading && selectedProject && tracked.length === 0 && !twpQuery.isLoading && (
+        <SetupForm project={selectedProject} onAdded={invalidateTracked} />
       )}
 
       {/* Main dashboard */}
       {!isLoading && selectedProject && tracked.length > 0 && (
         <>
+          {/* No ranking data yet banner */}
+          {!hasAnyData && (
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-400">
+              <strong>No ranking data yet.</strong> Rank checks run daily. Click{" "}
+              <button
+                type="button"
+                onClick={() => checkNowMutation.mutate()}
+                disabled={checkNowMutation.isPending}
+                className="underline underline-offset-2 font-medium disabled:opacity-50"
+              >
+                {checkNowMutation.isPending ? "Queuing…" : "Check Now"}
+              </button>{" "}
+              to trigger an immediate check.
+            </div>
+          )}
+
           {/* Top metrics */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <MetricCard
               label="Visibility Score"
-              value={latestVisibility.toFixed(1)}
+              value={hasAnyData ? latestVisibility.toFixed(1) : "—"}
               icon={<Eye className="h-4 w-4" />}
               accent="purple"
-              sampleData={usingMockVisibility}
+              sampleData={usingMockVisibility && hasAnyData}
               tooltip="0–100 estimate of your share of organic search traffic across tracked keywords."
             />
             <MetricCard
               label="Top 3"
-              value={top3Count}
+              value={hasAnyData ? top3Count : "—"}
               icon={<Star className="h-4 w-4" />}
               accent="green"
-              sampleData={usingMockHistory}
             />
             <MetricCard
               label="Top 10"
-              value={top10Count}
+              value={hasAnyData ? top10Count : "—"}
               icon={<TrendingUp className="h-4 w-4" />}
               accent="blue"
-              sampleData={usingMockHistory}
             />
             <MetricCard
               label="Top 100"
-              value={top100Count}
+              value={hasAnyData ? top100Count : "—"}
               icon={<Target className="h-4 w-4" />}
-              sampleData={usingMockHistory}
             />
             <MetricCard
               label="Avg Position"
-              value={avgPos || "—"}
+              value={hasAnyData && avgPos !== null ? avgPos : "—"}
               icon={<TrendingUp className="h-4 w-4" />}
-              hint="Lower is better"
-              sampleData={usingMockHistory}
+              hint={hasAnyData ? "Lower is better" : undefined}
             />
           </div>
 
@@ -567,9 +535,8 @@ export default function RankTrackerPage() {
                 <CardTitle className="text-base">Tracked Keywords</CardTitle>
                 <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
                   {filteredRows.length}
-                  {filteredRows.length !== rows.length && ` / ${rows.length}`}
+                  {filteredRows.length !== tracked.length && ` / ${tracked.length}`}
                 </span>
-                {usingMockHistory && <SampleDataBadge />}
               </div>
               <div className="grid gap-2 sm:grid-cols-[1fr_140px_140px_120px]">
                 <div className="relative">
@@ -625,22 +592,20 @@ export default function RankTrackerPage() {
                       <TableHead className="text-right">Best</TableHead>
                       <TableHead className="text-right">Current</TableHead>
                       <TableHead className="text-right">Change</TableHead>
-                      <TableHead className="text-right">Volume</TableHead>
-                      <TableHead className="text-right">CPC</TableHead>
                       <TableHead>URL</TableHead>
                       <TableHead>SERP</TableHead>
-                      <TableHead className="w-20" />
+                      <TableHead className="w-16" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredRows.length === 0 ? (
+                    {pagedRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                           No keywords match the current filters.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredRows.map((row) => (
+                      pagedRows.map((row) => (
                         <TableRow
                           key={row.id}
                           className="cursor-pointer"
@@ -655,34 +620,40 @@ export default function RankTrackerPage() {
                             </div>
                           </TableCell>
                           <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                            #{row.best_position}
+                            {row.bestPosition !== null ? `#${row.bestPosition}` : "—"}
                           </TableCell>
                           <TableCell className="text-right">
-                            <PositionPill position={row.current_position} />
+                            {row.currentPosition !== null ? (
+                              <PositionPill position={row.currentPosition} />
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <ChangeIndicator change={row.change} />
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMetric(row.volume)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            ${row.cpc.toFixed(2)}
+                            {row.change !== null ? (
+                              <ChangeIndicator change={row.change} />
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="max-w-[160px]">
-                            <a
-                              href={row.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="inline-flex items-center gap-1 truncate text-xs text-primary hover:underline"
-                            >
-                              <span className="truncate">{prettyUrl(row.url)}</span>
-                              <ExternalLink className="h-3 w-3 shrink-0" />
-                            </a>
+                            {row.url ? (
+                              <a
+                                href={row.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 truncate text-xs text-primary hover:underline"
+                              >
+                                <span className="truncate">{prettyUrl(row.url)}</span>
+                                <ExternalLink className="h-3 w-3 shrink-0" />
+                              </a>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell>
-                            <SerpFeatureIcons features={row.serp_features} />
+                            <SerpFeatureIcons features={row.serpFeatures} />
                           </TableCell>
                           <TableCell>
                             <button
@@ -705,15 +676,52 @@ export default function RankTrackerPage() {
                   </TableBody>
                 </Table>
               </div>
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between border-t px-4 py-3">
+                  <span className="text-xs text-muted-foreground">
+                    {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredRows.length)} of {filteredRows.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </>
+      )}
+
+      {/* Add Keywords Dialog */}
+      {selectedProject && (
+        <AddKeywordsDialog
+          open={addDialogOpen}
+          onOpenChange={setAddDialogOpen}
+          project={selectedProject}
+          onAdded={invalidateTracked}
+        />
       )}
 
       {/* Detail slide-out */}
       {detailKeyword && (
         <KeywordDetailDrawer
           keyword={detailKeyword}
+          projectId={selectedProjectId}
           onClose={() => setDetailKeyword(null)}
         />
       )}
@@ -721,22 +729,14 @@ export default function RankTrackerPage() {
   );
 }
 
-// ── Setup form ───────────────────────────────────────────────────────────────
+// ── Keyword form shared state ─────────────────────────────────────────────────
 
-function SetupForm({
-  project,
-  onAdded,
-}: {
-  project: Project;
-  onAdded: () => Promise<void>;
-}) {
-  const { getToken } = useAuth();
-  const [raw, setRaw] = useState("");
+function useKeywordForm(project: Project) {
   const projectLocationValue =
     KEYWORD_LOCATIONS.find((l) => l.code === project.countryCode)?.value ?? "2356";
+  const [raw, setRaw] = useState("");
   const [location, setLocation] = useState<string>(projectLocationValue);
   const [device, setDevice] = useState<"desktop" | "mobile" | "both">("desktop");
-
   const keywords = useMemo(
     () =>
       raw
@@ -746,35 +746,25 @@ function SetupForm({
         .slice(0, 100),
     [raw]
   );
+  return { raw, setRaw, location, setLocation, device, setDevice, keywords };
+}
+
+// ── Setup form ────────────────────────────────────────────────────────────────
+
+function SetupForm({
+  project,
+  onAdded,
+}: {
+  project: Project;
+  onAdded: () => Promise<void>;
+}) {
+  const { getToken } = useAuth();
+  const form = useKeywordForm(project);
 
   const addMutation = useMutation({
-    mutationFn: async () => {
-      const token = await getToken();
-      const devices: Array<"desktop" | "mobile"> = device === "both" ? ["desktop", "mobile"] : [device];
-      const results = await Promise.all(
-        devices.map((dev) =>
-          apiClient<{ added: number; duplicates: number }>(
-            `/keywords/projects/${project.id}/tracked`,
-            {
-              method: "POST",
-              body: JSON.stringify({
-                keywords,
-                locationCode: Number(location),
-                languageCode: "en",
-                device: dev,
-              }),
-              token: token ?? undefined,
-            }
-          )
-        )
-      );
-      return results.reduce(
-        (acc, r) => ({ added: acc.added + r.added, duplicates: acc.duplicates + r.duplicates }),
-        { added: 0, duplicates: 0 }
-      );
-    },
+    mutationFn: () => submitKeywords(getToken, project.id, form.keywords, form.location, form.device),
     onSuccess: async () => {
-      setRaw("");
+      form.setRaw("");
       await onAdded();
     },
   });
@@ -788,54 +778,21 @@ function SetupForm({
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Textarea
-          placeholder="One keyword per line"
-          className="min-h-44"
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-        />
-        <p className="text-sm text-muted-foreground">
-          {keywords.length}/100 keywords ready
-        </p>
-
-        <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-          <div className="space-y-2">
-            <Label>Location</Label>
-            <CountrySelector value={location} onValueChange={setLocation} className="w-full" />
-          </div>
-          <div className="space-y-2">
-            <Label>Device</Label>
-            <Select value={device} onValueChange={(v) => setDevice(v as typeof device)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="desktop">Desktop</SelectItem>
-                <SelectItem value="mobile">Mobile</SelectItem>
-                <SelectItem value="both">Both (Desktop + Mobile)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
+        <KeywordFormFields form={form} />
         {addMutation.isError && (
           <p className="text-sm text-destructive">
-            {addMutation.error instanceof Error
-              ? addMutation.error.message
-              : "Failed to add keywords."}
+            {addMutation.error instanceof Error ? addMutation.error.message : "Failed to add keywords."}
           </p>
         )}
-
         {addMutation.isSuccess && (
           <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-900/40 dark:bg-green-950/30 dark:text-green-400">
             Tracking started · {addMutation.data.added} added · {addMutation.data.duplicates} duplicates skipped
           </p>
         )}
-
         <div className="flex justify-end">
           <Button
             onClick={() => addMutation.mutate()}
-            disabled={keywords.length === 0 || addMutation.isPending}
+            disabled={form.keywords.length === 0 || addMutation.isPending}
           >
             <Plus className="mr-1.5 h-4 w-4" />
             {addMutation.isPending ? "Starting…" : "Start Tracking"}
@@ -846,13 +803,138 @@ function SetupForm({
   );
 }
 
-// ── Detail drawer ────────────────────────────────────────────────────────────
+// ── Add Keywords Dialog ───────────────────────────────────────────────────────
+
+function AddKeywordsDialog({
+  open,
+  onOpenChange,
+  project,
+  onAdded,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  project: Project;
+  onAdded: () => Promise<void>;
+}) {
+  const { getToken } = useAuth();
+  const form = useKeywordForm(project);
+
+  const addMutation = useMutation({
+    mutationFn: () => submitKeywords(getToken, project.id, form.keywords, form.location, form.device),
+    onSuccess: async () => {
+      form.setRaw("");
+      await onAdded();
+      onOpenChange(false);
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Add Keywords to Track</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <KeywordFormFields form={form} />
+          {addMutation.isError && (
+            <p className="text-sm text-destructive">
+              {addMutation.error instanceof Error ? addMutation.error.message : "Failed to add keywords."}
+            </p>
+          )}
+          {addMutation.isSuccess && (
+            <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+              Added {addMutation.data.added} keywords · {addMutation.data.duplicates} duplicates skipped
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button
+              onClick={() => addMutation.mutate()}
+              disabled={form.keywords.length === 0 || addMutation.isPending}
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              {addMutation.isPending ? "Adding…" : "Add Keywords"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Shared form fields ────────────────────────────────────────────────────────
+
+type KeywordFormState = ReturnType<typeof useKeywordForm>;
+
+function KeywordFormFields({ form }: { form: KeywordFormState }) {
+  return (
+    <>
+      <Textarea
+        placeholder="One keyword per line (up to 100)"
+        className="min-h-36"
+        value={form.raw}
+        onChange={(e) => form.setRaw(e.target.value)}
+      />
+      <p className="text-sm text-muted-foreground">{form.keywords.length}/100 keywords ready</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label>Location</Label>
+          <CountrySelector value={form.location} onValueChange={form.setLocation} className="w-full" />
+        </div>
+        <div className="space-y-2">
+          <Label>Device</Label>
+          <Select value={form.device} onValueChange={(v) => form.setDevice(v as typeof form.device)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="desktop">Desktop</SelectItem>
+              <SelectItem value="mobile">Mobile</SelectItem>
+              <SelectItem value="both">Both (Desktop + Mobile)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </>
+  );
+}
+
+async function submitKeywords(
+  getToken: () => Promise<string | null>,
+  projectId: string,
+  keywords: string[],
+  location: string,
+  device: "desktop" | "mobile" | "both"
+): Promise<{ added: number; duplicates: number }> {
+  const token = await getToken();
+  const devices: Array<"desktop" | "mobile"> = device === "both" ? ["desktop", "mobile"] : [device];
+  const results = await Promise.all(
+    devices.map((dev) =>
+      apiClient<{ added: number; duplicates: number }>(
+        `/keywords/projects/${projectId}/tracked`,
+        {
+          method: "POST",
+          body: JSON.stringify({ keywords, locationCode: Number(location), languageCode: "en", device: dev }),
+          token: token ?? undefined,
+        }
+      )
+    )
+  );
+  return results.reduce(
+    (acc, r) => ({ added: acc.added + r.added, duplicates: acc.duplicates + r.duplicates }),
+    { added: 0, duplicates: 0 }
+  );
+}
+
+// ── Detail drawer ─────────────────────────────────────────────────────────────
 
 function KeywordDetailDrawer({
   keyword,
+  projectId,
   onClose,
 }: {
-  keyword: TrackedKeyword;
+  keyword: TrackedWithPosition;
+  projectId: string;
   onClose: () => void;
 }) {
   const { getToken } = useAuth();
@@ -862,20 +944,18 @@ function KeywordDetailDrawer({
       const token = await getToken();
       return apiClient<{
         history: Array<{ checked_at: string; position: number }>;
-      }>(`/rank/projects/${keyword.projectId}/history?keywordId=${keyword.id}&days=90`, {
+      }>(`/rank/projects/${projectId}/history?keywordId=${keyword.id}&days=90`, {
         token: token ?? undefined,
       });
     },
     retry: false,
   });
 
-  const realHistory =
+  const series =
     historyQuery.data?.history?.map((h) => ({
-      date: new Date(h.checked_at).toISOString().split("T")[0],
+      date: new Date(h.checked_at).toISOString().split("T")[0]!,
       position: h.position,
     })) ?? [];
-  const series = realHistory.length > 0 ? realHistory : mockKeywordHistory(keyword.keyword, 90);
-  const usingMock = realHistory.length === 0;
 
   return (
     <>
@@ -886,6 +966,9 @@ function KeywordDetailDrawer({
             <p className="truncate text-sm font-semibold">{keyword.keyword}</p>
             <p className="text-xs text-muted-foreground">
               {keyword.locationCode} · <span className="capitalize">{keyword.device}</span>
+              {keyword.currentPosition !== null && (
+                <span className="ml-2 font-medium text-foreground">· #{keyword.currentPosition} current</span>
+              )}
             </p>
           </div>
           <button
@@ -900,52 +983,62 @@ function KeywordDetailDrawer({
 
         <div className="flex-1 space-y-5 overflow-y-auto p-4">
           <div>
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Position History (90d)</h3>
-              {usingMock && <SampleDataBadge />}
-            </div>
-            <div className="h-56 rounded-md border bg-muted/10 p-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={(d) =>
-                      new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
-                    }
-                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                    axisLine={false}
-                    tickLine={false}
-                    minTickGap={28}
-                  />
-                  <YAxis
-                    reversed
-                    domain={[1, 100]}
-                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={28}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "hsl(var(--popover))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: 6,
-                      fontSize: 11,
-                    }}
-                    formatter={(v: number) => [`#${v}`, "Position"]}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="position"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <p className="mt-1 text-[10px] text-muted-foreground">Y-axis is reversed — lower is better.</p>
+            <h3 className="mb-2 text-sm font-semibold">Position History (90d)</h3>
+            {historyQuery.isLoading ? (
+              <Skeleton className="h-56 w-full rounded-md" />
+            ) : series.length > 0 ? (
+              <>
+                <div className="h-56 rounded-md border bg-muted/10 p-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={series} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(d) =>
+                          new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+                        }
+                        tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        axisLine={false}
+                        tickLine={false}
+                        minTickGap={28}
+                      />
+                      <YAxis
+                        reversed
+                        domain={[1, 100]}
+                        tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                        axisLine={false}
+                        tickLine={false}
+                        width={28}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: "hsl(var(--popover))",
+                          border: "1px solid hsl(var(--border))",
+                          borderRadius: 6,
+                          fontSize: 11,
+                        }}
+                        formatter={(v: number) => [`#${v}`, "Position"]}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="position"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="mt-1 text-[10px] text-muted-foreground">Y-axis is reversed — lower is better.</p>
+              </>
+            ) : (
+              <div className="flex h-56 items-center justify-center rounded-md border border-dashed bg-muted/30 text-center text-sm text-muted-foreground">
+                <div>
+                  <p className="font-medium">No history yet</p>
+                  <p className="mt-1 text-xs">Position data will appear after the first rank check.</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>
@@ -1009,8 +1102,7 @@ function ChangeIndicator({ change }: { change: number }) {
   if (change === 0) {
     return (
       <span className="inline-flex items-center gap-0.5 text-xs font-medium text-muted-foreground">
-        <Minus className="h-3 w-3" />
-        0
+        <Minus className="h-3 w-3" />0
       </span>
     );
   }
@@ -1049,13 +1141,4 @@ function SerpFeatureIcons({ features }: { features: string[] }) {
       })}
     </div>
   );
-}
-
-function prettyUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return u.pathname.length > 1 ? u.pathname : "/";
-  } catch {
-    return url;
-  }
 }

@@ -1,8 +1,17 @@
 const CLICKHOUSE_URL = () => process.env["CLICKHOUSE_URL"] ?? "http://localhost:8123";
 const CLICKHOUSE_DB = () => process.env["CLICKHOUSE_DATABASE"] ?? "garage_seo";
+const CLICKHOUSE_USER = () => process.env["CLICKHOUSE_USER"] ?? "default";
+const CLICKHOUSE_PASSWORD = () => process.env["CLICKHOUSE_PASSWORD"] ?? "";
 
 interface CHRow {
   [key: string]: unknown;
+}
+
+function authHeaders(): Record<string, string> {
+  return {
+    "X-ClickHouse-User": CLICKHOUSE_USER(),
+    "X-ClickHouse-Key": CLICKHOUSE_PASSWORD(),
+  };
 }
 
 export const clickhouse = {
@@ -13,7 +22,7 @@ export const clickhouse = {
 
     const res = await fetch(url.toString(), {
       method: "POST",
-      headers: { "Content-Type": "text/plain" },
+      headers: { "Content-Type": "text/plain", ...authHeaders() },
       body: sql,
     });
 
@@ -43,7 +52,7 @@ export const clickhouse = {
 
     const res = await fetch(url.toString(), {
       method: "POST",
-      headers: { "Content-Type": "application/x-ndjson" },
+      headers: { "Content-Type": "application/x-ndjson", ...authHeaders() },
       body,
     });
 
@@ -59,7 +68,7 @@ export const clickhouse = {
 
     const res = await fetch(url.toString(), {
       method: "POST",
-      headers: { "Content-Type": "text/plain" },
+      headers: { "Content-Type": "text/plain", ...authHeaders() },
       body: ddl,
     });
 

@@ -26,6 +26,8 @@ import competitorsRouter from "./routes/competitors.js";
 import geoRouter from "./routes/geo.js";
 import billingRouter, { razorpayWebhookHandler } from "./routes/billing.js";
 import dashboardRouter from "./routes/dashboard.js";
+import accountRouter from "./routes/account.js";
+import gscRouter, { gscCallbackHandler } from "./routes/gsc.js";
 
 const app = new Hono();
 
@@ -175,6 +177,9 @@ app.get("/health", async (c) => {
 // Razorpay webhook — unauthenticated, verified by HMAC signature
 app.post("/api/billing/webhook/razorpay", razorpayWebhookHandler);
 
+// GSC OAuth callback — unauthenticated (Google redirects here after consent)
+app.get("/api/gsc/callback", gscCallbackHandler);
+
 // ─── Clerk auth on all /api/* routes ─────────────────────────────────────────
 
 app.use("/api/*", clerkAuth);
@@ -194,6 +199,8 @@ api.route("/competitors", competitorsRouter);
 api.route("/geo", geoRouter);
 api.route("/billing", billingRouter);
 api.route("/dashboard", dashboardRouter);
+api.route("/account", accountRouter);
+api.route("/gsc", gscRouter);
 
 app.route("/api", api);
 
