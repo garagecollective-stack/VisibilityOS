@@ -13,7 +13,9 @@ import {
   type AuditIssue,
   type CrawlResult,
 } from "../lib/audit-rules.js";
-import type { CrawledPageSummary, AiCrawlerAccess, RawMetricsJson } from "@garage-seo/db";
+import type { CrawledPageSummary, AiCrawlerAccess, RawMetricsJson, PageSpeedEntry } from "@garage-seo/db";
+import { PageSpeedClient } from "@garage-seo/google-apis";
+import { clickhouse } from "../lib/clickhouse/index.js";
 
 const router = new Hono();
 
@@ -62,7 +64,7 @@ router.post(
       .returning();
 
     // Fire and forget — do not await
-    void runAuditBackground(run!.id, project.domain);
+    void runAuditBackground(run!.id, project.domain, project.id);
 
     return c.json({ auditRunId: run!.id }, 202);
   }
@@ -279,7 +281,7 @@ router.get("/progress/:projectId", async (c) => {
 
 // ── Background job ────────────────────────────────────────────────────────────
 
-async function runAuditBackground(auditRunId: string, domain: string): Promise<void> {
+async function runAuditBackground(auditRunId: string, domain: string, projectId: string): Promise<void> {
   const crawlerUrl = process.env["CRAWLER_URL"];
   if (!crawlerUrl) {
     console.error(`[audit] CRAWLER_URL not set — cannot run audit ${auditRunId}`);
@@ -527,7 +529,132 @@ async function runAuditBackground(auditRunId: string, domain: string): Promise<v
       // Non-fatal — skip
     }
 
-    const allIssues = [...report.issues, ...siteIssues];
+    // 3c. PageSpeed for top GSC pages (non-blocking, runs in parallel)
+    const pagespeedEntries: PageSpeedEntry[] = [];
+    if (pageSpeedKey) {
+      try {
+        const psClient = new PageSpeedClient(pageSpeedKey);
+
+        // Query ClickHouse for top 5 pages by GSC traffic (last 30 days)
+        let gscPages: Array<{ page: string }> = [];
+        try {
+          gscPages = await clickhouse.query<{ page: string; total_clicks: string }>(
+            `SELECT page, SUM(clicks) AS total_clicks
+             FROM gsc_metrics
+             WHERE project_id = '${projectId}'
+               AND date >= today() - 30
+             GROUP BY page
+             ORDER BY total_clicks DESC
+             LIMIT 5`
+          );
+        } catch {
+          // ClickHouse not available or no GSC data — will fall back to homepage
+        }
+
+        // Build full URLs; fall back to homepage if no GSC data
+        const urlsToCheck: string[] =
+          gscPages.length > 0
+            ? gscPages.map((r) => {
+                const p = r.page;
+                if (p.startsWith("http")) return p;
+                return `https://${domain}${p.startsWith("/") ? p : `/${p}`}`;
+              })
+            : [`https://${domain}`];
+
+        const homepageUrl = `https://${domain}`;
+
+        const results = await Promise.allSettled(
+          urlsToCheck.map(async (url) => {
+            const [mobile, desktop] = await Promise.allSettled([
+              psClient.analyze(url, "mobile"),
+              psClient.analyze(url, "desktop"),
+            ]);
+            return { url, mobile, desktop };
+          })
+        );
+
+        for (const result of results) {
+          if (result.status !== "fulfilled") continue;
+          const { url, mobile, desktop } = result.value;
+          if (mobile.status !== "fulfilled") continue;
+          const m = mobile.value;
+          const d = desktop.status === "fulfilled" ? desktop.value : null;
+
+          pagespeedEntries.push({
+            url,
+            is_homepage: url === homepageUrl,
+            mobile_score: m.performance_score,
+            desktop_score: d?.performance_score ?? m.performance_score,
+            lcp_ms: m.lcp,
+            cls: m.cls,
+            tbt_ms: m.tbt,
+            fcp_ms: m.fcp,
+            opportunities: m.opportunities
+              .filter((o) => o.savings_ms > 0)
+              .slice(0, 5)
+              .map((o) => ({ title: o.title, savings_ms: o.savings_ms })),
+          });
+        }
+        console.log(`[audit] pagespeed top-pages: ${pagespeedEntries.length} entries collected`);
+      } catch (err) {
+        console.log(`[audit] pagespeed top-pages error (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Generate CWV issues from pagespeed entries
+    const pagespeedIssues: AuditIssue[] = [];
+    for (const entry of pagespeedEntries) {
+      const label = entry.is_homepage ? "homepage" : entry.url;
+      if (entry.mobile_score < 50) {
+        pagespeedIssues.push({
+          severity: "critical",
+          category: "cwv",
+          url: entry.url,
+          affectedUrls: [entry.url],
+          title: `Poor mobile PageSpeed score on ${label}`,
+          description: `Mobile PageSpeed score is ${entry.mobile_score}/100.`,
+          recommendation: "Address render-blocking resources, reduce server response time, and optimize images.",
+          affectedCount: 1,
+        });
+      } else if (entry.mobile_score < 70) {
+        pagespeedIssues.push({
+          severity: "warning",
+          category: "cwv",
+          url: entry.url,
+          affectedUrls: [entry.url],
+          title: `Mobile PageSpeed needs improvement on ${label}`,
+          description: `Mobile PageSpeed score is ${entry.mobile_score}/100.`,
+          recommendation: "Review PageSpeed opportunities and address top savings items.",
+          affectedCount: 1,
+        });
+      }
+      if (entry.lcp_ms > 2500) {
+        pagespeedIssues.push({
+          severity: "critical",
+          category: "cwv",
+          url: entry.url,
+          affectedUrls: [entry.url],
+          title: `Slow LCP on ${label}`,
+          description: `Largest Contentful Paint is ${(entry.lcp_ms / 1000).toFixed(2)}s (threshold: 2.5s).`,
+          recommendation: "Optimize the largest visible element — reduce image size, improve TTFB, or use a CDN.",
+          affectedCount: 1,
+        });
+      }
+      if (entry.cls > 0.1) {
+        pagespeedIssues.push({
+          severity: "warning",
+          category: "cwv",
+          url: entry.url,
+          affectedUrls: [entry.url],
+          title: `High CLS on ${label}`,
+          description: `Cumulative Layout Shift is ${entry.cls.toFixed(3)} (threshold: 0.1).`,
+          recommendation: "Set explicit size attributes on images and embeds; avoid inserting content above existing content.",
+          affectedCount: 1,
+        });
+      }
+    }
+
+    const allIssues = [...report.issues, ...siteIssues, ...pagespeedIssues];
     const allCriticalCount = allIssues.filter((i) => i.severity === "critical").length;
     const allWarningCount = allIssues.filter((i) => i.severity === "warning").length;
     const allNoticeCount = allIssues.filter((i) => i.severity === "notice").length;
@@ -615,6 +742,7 @@ async function runAuditBackground(auditRunId: string, domain: string): Promise<v
         crawledPages: crawledPagesSummary,
         aiCrawlerAccess: aiCrawlerAccess,
         rawMetricsJson: rawMetrics,
+        pagespeedResults: pagespeedEntries,
         completedAt: new Date(),
       })
       .where(eq(auditRuns.id, auditRunId));

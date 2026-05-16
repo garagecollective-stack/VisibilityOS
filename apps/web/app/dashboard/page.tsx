@@ -33,6 +33,7 @@ import {
   QuickActionsWidget,
   QuickStatsWidget,
 } from "@/components/dashboard/dashboard-sidebar";
+import { PageSpeedWidget } from "@/components/dashboard/pagespeed-widget";
 import { apiClient } from "@/lib/api";
 import { ssGet, ssSet } from "@/lib/session-store";
 
@@ -105,6 +106,13 @@ interface DashboardData {
   keywordDistribution: Record<string, number>;
   keywordChanges: { newKeywords: number; lostKeywords: number };
   topPages: Array<{ url: string; position: number; kwCount: number }>;
+  pagespeed: {
+    mobile: number | null;
+    desktop: number | null;
+    lcp_ms: number | null;
+    cls: number | null;
+    last_checked: string;
+  } | null;
 }
 
 // ── Sample visibility points (when no real data) ──────────────────────────────
@@ -420,6 +428,10 @@ export default function DashboardPage() {
                 notices={latestCompletedAudit?.notices ?? 0}
                 hasAudit={!!latestCompletedAudit}
                 latestRunId={latestCompletedAudit?.id}
+              />
+              <PageSpeedWidget
+                pagespeed={dashData?.pagespeed ?? null}
+                auditHref={latestCompletedAudit ? `/dashboard/audit/${latestCompletedAudit.id}` : "/dashboard/audit"}
               />
               <QuickActionsWidget />
             </div>

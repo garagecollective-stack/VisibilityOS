@@ -20,6 +20,8 @@ interface TopPage {
   keywords: number;
   topKeyword: string;
   topPosition: number;
+  mobile_score?: number | null;
+  desktop_score?: number | null;
 }
 
 interface Props {
@@ -41,6 +43,33 @@ function PositionBadge({ pos }: { pos: number }) {
   return (
     <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tabular-nums", color)}>
       #{pos}
+    </span>
+  );
+}
+
+function SpeedBadge({ score }: { score: number | null | undefined }) {
+  if (score == null) {
+    return (
+      <span
+        title="Mobile PageSpeed score"
+        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tabular-nums bg-gray-100 text-gray-500"
+      >
+        —
+      </span>
+    );
+  }
+  const color =
+    score >= 80
+      ? "bg-green-100 text-green-700"
+      : score >= 50
+        ? "bg-yellow-100 text-yellow-700"
+        : "bg-red-100 text-red-700";
+  return (
+    <span
+      title="Mobile PageSpeed score"
+      className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tabular-nums", color)}
+    >
+      {score}
     </span>
   );
 }
@@ -87,6 +116,7 @@ export function TopPagesTable({ pages, loading, isMock, competitorDomain }: Prop
               <TableHead className="w-8">#</TableHead>
               <TableHead>Page URL</TableHead>
               <TableHead className="text-right">Est. Traffic</TableHead>
+              <TableHead className="text-right">Speed</TableHead>
               <TableHead className="text-right">Keywords</TableHead>
               <TableHead>Top Keyword</TableHead>
               <TableHead className="text-right">Top Pos</TableHead>
@@ -112,6 +142,9 @@ export function TopPagesTable({ pages, loading, isMock, competitorDomain }: Prop
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-sm">
                   {formatMetric(page.traffic)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <SpeedBadge score={page.mobile_score} />
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-sm">
                   {formatMetric(page.keywords)}

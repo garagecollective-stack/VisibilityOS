@@ -43,6 +43,18 @@ export interface RawMetricsJson {
   llms_txt_found?: boolean;
 }
 
+export interface PageSpeedEntry {
+  url: string;
+  is_homepage: boolean;
+  mobile_score: number;
+  desktop_score: number;
+  lcp_ms: number;
+  cls: number;
+  tbt_ms: number;
+  fcp_ms: number;
+  opportunities: Array<{ title: string; savings_ms: number }>;
+}
+
 export interface CrawledPageSummary {
   url: string;
   status_code: number;
@@ -95,6 +107,7 @@ export const auditRuns = pgTable("audit_runs", {
   crawledPages: jsonb("crawled_pages").$type<CrawledPageSummary[]>().notNull().default([]),
   aiCrawlerAccess: jsonb("ai_crawler_access").$type<AiCrawlerAccess>().notNull().default({}),
   rawMetricsJson: jsonb("raw_metrics_json").$type<RawMetricsJson>().notNull().default({}),
+  pagespeedResults: jsonb("pagespeed_results").$type<PageSpeedEntry[]>().notNull().default([]),
   failureReason: text("failure_reason"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),

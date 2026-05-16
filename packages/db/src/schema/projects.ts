@@ -41,9 +41,21 @@ export interface ProjectSettings {
   competitors?: string[];
   alertsEnabled?: boolean;
   rankDropThreshold?: number;
-  crawlFrequency?: "daily" | "weekly" | "monthly";
+  crawlFrequency?: "daily" | "weekly" | "monthly" | "manual";
   gscPropertyUrl?: string;
   ga4PropertyId?: string;
+  maxPagesToCrawl?: number;
+  userAgent?: "visibilityos" | "googlebot" | "default";
+  respectRobots?: boolean;
+  notificationsEnabled?: boolean;
+  notifyOn?: {
+    criticalIssues?: boolean;
+    rankDrops?: boolean;
+    newBacklinks?: boolean;
+    gscSync?: boolean;
+    reportGenerated?: boolean;
+  };
+  notificationEmail?: string;
 }
 
 export const projectsRelations = relations(projects, ({ one, many }) => ({
