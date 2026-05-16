@@ -28,7 +28,11 @@ import billingRouter, { razorpayWebhookHandler } from "./routes/billing.js";
 import dashboardRouter from "./routes/dashboard.js";
 import accountRouter from "./routes/account.js";
 import gscRouter, { gscCallbackHandler } from "./routes/gsc.js";
+test/nitish-keyword-filter
 import locationsRouter from "./routes/locations.js";
+import reportsRouter from "./routes/reports.js";
+import settingsRouter from "./routes/settings.js";
+main
 
 const app = new Hono();
 
@@ -216,6 +220,8 @@ api.route("/billing", billingRouter);
 api.route("/dashboard", dashboardRouter);
 api.route("/account", accountRouter);
 api.route("/gsc", gscRouter);
+api.route("/reports", reportsRouter);
+api.route("/settings", settingsRouter);
 
 app.route("/api", api);
 

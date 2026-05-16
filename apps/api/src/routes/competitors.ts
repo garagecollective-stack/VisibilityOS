@@ -2,12 +2,14 @@ import "../types.js";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { getDb } from "../lib/db/index.js";
 import { projects, trackedKeywords, competitors } from "@garage-seo/db";
 import { eq, and } from "drizzle-orm";
 import { createId } from "@garage-seo/db";
 import { DataForSEO } from "@garage-seo/dataforseo";
 import { getRedis, makeCacheAdapter } from "../lib/redis/index.js";
+import { PageSpeedClient } from "@garage-seo/google-apis";
 
 const router = new Hono();
 
@@ -394,16 +396,16 @@ router.get("/projects/:projectId/top-pages", async (c) => {
   }
 
   if (!hasCreds()) {
-    return c.json({
-      pages: MOCK_TOP_PAGES.map((p) => ({
-        url: `https://${competitorDomain}${p.url}`,
-        traffic: p.traffic,
-        keywords: p.keywords,
-        topKeyword: p.topKeyword,
-        topPosition: p.topPosition,
-      })),
-      isMock: true,
-    });
+    const mockPages = MOCK_TOP_PAGES.map((p) => ({
+      url: `https://${competitorDomain}${p.url}`,
+      traffic: p.traffic,
+      keywords: p.keywords,
+      topKeyword: p.topKeyword,
+      topPosition: p.topPosition,
+      mobile_score: null as number | null,
+      desktop_score: null as number | null,
+    }));
+    return c.json({ pages: mockPages, isMock: true });
   }
 
   try {
@@ -411,28 +413,67 @@ router.get("/projects/:projectId/top-pages", async (c) => {
     const loc = parseInt(locationCode, 10);
     const items = await dfs.labs.getTopPages(competitorDomain, loc, 20);
 
-    const pages = items.map((item) => ({
-      url: item.page_address,
+    const basePages = items.map((item) => ({
+      url: item.page_address as string,
       traffic: item.traffic ?? 0,
       keywords: item.keywords_count ?? 0,
       topKeyword: item.top_keyword ?? "",
       topPosition: item.top_position ?? 0,
+      mobile_score: null as number | null,
+      desktop_score: null as number | null,
     }));
 
-    const resp = { pages, isMock: false };
+    // Enrich top 5 with PageSpeed (parallel, cached 24h per URL)
+    const pageSpeedKey = process.env["GOOGLE_PAGESPEED_API_KEY"];
+    if (pageSpeedKey && basePages.length > 0) {
+      const psClient = new PageSpeedClient(pageSpeedKey);
+      const top5 = basePages.slice(0, 5);
+
+      const speedResults = await Promise.allSettled(
+        top5.map(async (page) => {
+          const urlHash = createHash("sha256").update(page.url).digest("hex");
+          const ck = `pagespeed:url:${urlHash}`;
+          const cached = await redis.get(ck);
+          if (cached) return { url: page.url, ...(JSON.parse(cached) as { mobile_score: number; desktop_score: number }) };
+
+          const [mobileRes, desktopRes] = await Promise.allSettled([
+            psClient.analyze(page.url, "mobile"),
+            psClient.analyze(page.url, "desktop"),
+          ]);
+          const mobile = mobileRes.status === "fulfilled" ? mobileRes.value.performance_score : null;
+          const desktop = desktopRes.status === "fulfilled" ? desktopRes.value.performance_score : null;
+          if (mobile != null) {
+            await redis.setex(ck, 86_400, JSON.stringify({ mobile_score: mobile, desktop_score: desktop }));
+          }
+          return { url: page.url, mobile_score: mobile, desktop_score: desktop };
+        })
+      );
+
+      for (const result of speedResults) {
+        if (result.status !== "fulfilled") continue;
+        const { url, mobile_score, desktop_score } = result.value;
+        const page = basePages.find((p) => p.url === url);
+        if (page) {
+          page.mobile_score = mobile_score;
+          page.desktop_score = desktop_score;
+        }
+      }
+    }
+
+    const resp = { pages: basePages, isMock: false };
     await redis.setex(cacheKey, 86_400, JSON.stringify(resp));
     return c.json(resp);
   } catch {
-    return c.json({
-      pages: MOCK_TOP_PAGES.map((p) => ({
-        url: `https://${competitorDomain}${p.url}`,
-        traffic: p.traffic,
-        keywords: p.keywords,
-        topKeyword: p.topKeyword,
-        topPosition: p.topPosition,
-      })),
-      isMock: true,
-    });
+    const mockPages = MOCK_TOP_PAGES.map((p) => ({
+      url: `https://${competitorDomain}${p.url}`,
+      traffic: p.traffic,
+      keywords: p.keywords,
+      topKeyword: p.topKeyword,
+      topPosition: p.topPosition,
+      mobile_score: null as number | null,
+      desktop_score: null as number | null,
+    }));
+    return c.json({ pages: mockPages, isMock: true });
   }
 });
 

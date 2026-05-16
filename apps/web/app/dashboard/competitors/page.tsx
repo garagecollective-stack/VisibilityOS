@@ -435,7 +435,7 @@ export default function CompetitorsPage() {
   }
 
   return (
-    <div className="p-6 space-y-8 max-w-7xl">
+    <div className="p-6 space-y-6">
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div className="flex-1">
@@ -484,7 +484,7 @@ export default function CompetitorsPage() {
         <>
           {/* ── Section 1: Competitor Management / Overview Cards ─────────── */}
           {competitorsQuery.isLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {Array.from({ length: 3 }).map((_, i) => (
                 <CompetitorCardSkeleton key={i} />
               ))}
@@ -507,7 +507,7 @@ export default function CompetitorsPage() {
               }
             />
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Your domain card */}
               {yourCard && (
                 <CompetitorCard data={yourCard} isYou />
