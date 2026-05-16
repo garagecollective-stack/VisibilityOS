@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -28,8 +28,8 @@ import { KeywordVariationsTable } from "@/components/keywords/keyword-variations
 import { PeopleAlsoAsk, type PaaQuestion } from "@/components/keywords/people-also-ask";
 import { SerpFeaturesGrid } from "@/components/keywords/serp-features-grid";
 import { SerpTop10, type OrganicResult } from "@/components/keywords/serp-top10";
-import { CountrySelector } from "@/components/shared/country-selector";
 import { DeviceToggle, type Device } from "@/components/shared/device-toggle";
+import { LocationFilter, type LocationSelection } from "@/components/LocationFilter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -57,7 +57,7 @@ interface SerpInput {
 export default function KeywordOverviewPage() {
   const { getToken } = useAuth();
   const [query, setQuery] = useState("");
-  const [location, setLocation] = useState<string>("2356");
+  const [locationCode, setLocationCode] = useState<number>(2356);
   const [device, setDevice] = useState<Device>("desktop");
 
   const [results, setResults] = useState<KeywordOverviewResult | null>(null);
@@ -73,7 +73,7 @@ export default function KeywordOverviewPage() {
     const usedLocation = storedLocation ?? "2356";
     const usedDevice: Device =
       storedDevice === "desktop" || storedDevice === "mobile" ? storedDevice : "desktop";
-    setLocation(usedLocation);
+    setLocationCode(Number(usedLocation));
     setDevice(usedDevice);
     if (kw && data) {
       setQuery(kw);
@@ -90,7 +90,7 @@ export default function KeywordOverviewPage() {
         method: "POST",
         body: JSON.stringify({
           keyword,
-          locationCode: Number(location),
+          locationCode,
           languageCode: "en",
           device,
         }),
@@ -101,7 +101,7 @@ export default function KeywordOverviewPage() {
       setResults(data);
       setResultsFor(keyword);
       ssSet("lastOverviewKeyword", keyword);
-      ssSet("lastOverviewLocation", location);
+      ssSet("lastOverviewLocation", String(locationCode));
       ssSet("lastOverviewDevice", device);
       ssStringify("lastOverviewResult", data);
     },
@@ -156,14 +156,30 @@ export default function KeywordOverviewPage() {
     const kw = query.trim();
     setResults(null);
     overviewMutation.mutate(kw);
-    setSerpInput({ keyword: kw, locationCode: Number(location), device });
+    setSerpInput({ keyword: kw, locationCode, device });
   };
 
   const showEmpty = results === null && !overviewMutation.isPending;
   const showSkeleton = overviewMutation.isPending;
   const showResults = results !== null && !overviewMutation.isPending;
 
-  const selectedLocation = KEYWORD_LOCATIONS.find((l) => l.value === location);
+  const selectedLocation = KEYWORD_LOCATIONS.find((l) => l.value === String(locationCode));
+
+  // Auto-refetch overview + SERP when the user picks a new location via LocationFilter.
+  // The ref is flipped only inside the user-driven handler so initial mount and session
+  // restore (which also set `locationCode`) do not trigger an unwanted re-fetch.
+  const userPickedLocationRef = useRef(false);
+  const handleLocationChange = (loc: LocationSelection) => {
+    userPickedLocationRef.current = true;
+    setLocationCode(loc.location_code);
+  };
+  useEffect(() => {
+    if (!userPickedLocationRef.current) return;
+    if (!resultsFor) return;
+    setSerpInput({ keyword: resultsFor, locationCode, device });
+    overviewMutation.mutate(resultsFor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationCode]);
 
   // SERP data — fall back to empty so child components can decide whether to render
   const serpData = serpQuery.data ?? null;
@@ -197,12 +213,15 @@ export default function KeywordOverviewPage() {
           </Button>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <CountrySelector value={location} onValueChange={setLocation} className="min-w-52" />
           <DeviceToggle value={device} onChange={setDevice} />
           <div className="ml-auto text-xs text-muted-foreground">
             Language: <span className="font-medium text-foreground">English</span>
           </div>
         </div>
+        <LocationFilter
+          onLocationChange={handleLocationChange}
+          defaultCountryCode={2356}
+        />
       </form>
 
       {overviewMutation.isError && (

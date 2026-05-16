@@ -2,6 +2,7 @@
   "name": "garage-seo",
   "version": "0.0.1",
   "private": true,
+  "packageManager": "npm@10.0.0",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -21,11 +22,11 @@
     "drizzle-orm": "^0.43.1"
   },
   "devDependencies": {
-    "turbo": "^2.5.4",
-    "typescript": "^5.8.3",
-    "prettier": "^3.5.3",
     "@types/node": "^22.15.3",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.6.1",
+    "prettier": "^3.5.3",
+    "turbo": "^2.5.4",
+    "typescript": "^5.8.3"
   },
   "engines": {
     "node": ">=20.0.0",

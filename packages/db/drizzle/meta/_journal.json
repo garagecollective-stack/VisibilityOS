@@ -43,6 +43,20 @@
       "when": 1778750000000,
       "tag": "0005_competitors_table",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778750001000,
+      "tag": "0006_gsc_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778750002000,
+      "tag": "0007_locations_table",
+      "breakpoints": true
     }
   ]
 }

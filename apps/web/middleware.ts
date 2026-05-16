@@ -19,7 +19,10 @@ export default clerkMiddleware(async (auth, req) => {
   // Not signed in → redirect to sign-in
   if (!userId) {
     const signInUrl = new URL("/sign-in", req.url);
-    signInUrl.searchParams.set("redirect_url", req.url);
+    const target = req.nextUrl.pathname + req.nextUrl.search;
+    if (target && target !== "/" && !target.startsWith("/sign-in") && !target.startsWith("/sign-up")) {
+      signInUrl.searchParams.set("redirect_url", target);
+    }
     return NextResponse.redirect(signInUrl);
   }
 

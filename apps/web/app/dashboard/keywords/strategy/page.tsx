@@ -10,7 +10,6 @@ import { StrategyClusterCard } from "@/components/keywords/strategy-cluster-card
 import { StrategyLoading } from "@/components/keywords/strategy-loading";
 import { StrategyPillarCard } from "@/components/keywords/strategy-pillar-card";
 import { StrategySummary } from "@/components/keywords/strategy-summary";
-import { CountrySelector } from "@/components/shared/country-selector";
 import { DeviceToggle, type Device } from "@/components/shared/device-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,7 +38,7 @@ export default function KeywordStrategyPage() {
   const { getToken } = useAuth();
   const [topic, setTopic] = useState("");
   const [url, setUrl] = useState("");
-  const [location, setLocation] = useState<string>("2356");
+  const [locationCode, setLocationCode] = useState<number>(2356);
   const [device, setDevice] = useState<Device>("desktop");
 
   const [results, setResults] = useState<KeywordStrategyResult | null>(null);
@@ -54,7 +53,9 @@ export default function KeywordStrategyPage() {
     const storedLocation = ssGet("lastStrategyLocation");
     const storedDevice = ssGet("lastStrategyDevice");
     const data = ssParse<KeywordStrategyResult>("lastStrategyResults");
-    if (storedLocation) setLocation(storedLocation);
+    if (storedLocation) {
+      setLocationCode(Number(storedLocation));
+    }
     if (storedDevice === "desktop" || storedDevice === "mobile") setDevice(storedDevice);
     if (t && data) {
       setTopic(t);
@@ -131,7 +132,7 @@ export default function KeywordStrategyPage() {
     strategyMutation.mutate({
       topic: topic.trim(),
       url: url.trim(),
-      locationCode: Number(location),
+      locationCode,
       device,
     });
   };
@@ -142,7 +143,7 @@ export default function KeywordStrategyPage() {
     strategyMutation.mutate({
       topic: resultsFor || topic.trim(),
       url: url.trim(),
-      locationCode: Number(location),
+      locationCode,
       device,
     });
   };
@@ -239,7 +240,22 @@ export default function KeywordStrategyPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <CountrySelector value={location} onValueChange={setLocation} />
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Country
+              </Label>
+              <Select
+                value={String(locationCode)}
+                onValueChange={(v) => setLocationCode(Number(v))}
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="2356">India</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <DeviceToggle value={device} onChange={setDevice} />
             <div className="ml-auto">
               <Button onClick={handleBuild} disabled={!topic.trim() || isPending}>
