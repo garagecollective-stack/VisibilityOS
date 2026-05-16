@@ -39,7 +39,6 @@ import {
   type Intent,
 } from "@/components/keywords/ideas-filter-panel";
 import { IdeasSummaryBar } from "@/components/keywords/ideas-summary-bar";
-import { CountrySelector } from "@/components/shared/country-selector";
 import { DeviceToggle, type Device } from "@/components/shared/device-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -73,6 +72,10 @@ const LOADING_MESSAGES = [
   "Analyzing search intent...",
   "Almost done...",
 ];
+
+// Location is currently fixed to India for Ideas — country-level data is identical
+// to city-level for this DataForSEO endpoint, so paying for the granularity isn't worth it.
+const INDIA_LOCATION_CODE = 2356;
 
 function isQuestion(keyword: string): boolean {
   return QUESTION_RE.test(keyword);
@@ -117,7 +120,6 @@ function applyFilters(rows: KeywordRow[], filters: IdeasFilters): KeywordRow[] {
 export default function KeywordIdeasPage() {
   const { getToken } = useAuth();
   const [keyword, setKeyword] = useState("");
-  const [location, setLocation] = useState<string>("2356");
   const [device, setDevice] = useState<Device>("desktop");
   const [tab, setTab] = useState<TabValue>("all");
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
@@ -133,10 +135,8 @@ export default function KeywordIdeasPage() {
 
   useEffect(() => {
     const storedKeyword = ssGet("lastIdeasKeyword");
-    const storedLocation = ssGet("lastIdeasLocation");
     const storedDevice = ssGet("lastIdeasDevice");
     const data = ssParse<KeywordIdeaResult>("lastIdeasResults");
-    if (storedLocation) setLocation(storedLocation);
     if (storedDevice === "desktop" || storedDevice === "mobile") setDevice(storedDevice);
     if (storedKeyword && data) {
       setKeyword(storedKeyword);
@@ -154,11 +154,10 @@ export default function KeywordIdeasPage() {
         token: token ?? undefined,
       });
     },
-    onSuccess: (data, { seed, locationCode, dev }) => {
+    onSuccess: (data, { seed, dev }) => {
       setResults(data);
       setResultsFor(seed);
       ssSet("lastIdeasKeyword", seed);
-      ssSet("lastIdeasLocation", locationCode);
       ssSet("lastIdeasDevice", dev);
       ssStringify("lastIdeasResults", data);
     },
@@ -216,7 +215,7 @@ export default function KeywordIdeasPage() {
     if (!keyword.trim()) return;
     setSelected(new Set());
     setResults(null);
-    ideasMutation.mutate({ seed: keyword.trim(), locationCode: location, dev: device });
+    ideasMutation.mutate({ seed: keyword.trim(), locationCode: String(INDIA_LOCATION_CODE), dev: device });
   };
 
   const toggleRow = (kw: string) => {
@@ -248,7 +247,7 @@ export default function KeywordIdeasPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
-        <div className="grid gap-3 md:grid-cols-[1fr_220px_auto_auto]">
+        <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -258,7 +257,6 @@ export default function KeywordIdeasPage() {
               onChange={(event) => setKeyword(event.target.value)}
             />
           </div>
-          <CountrySelector value={location} onValueChange={setLocation} />
           <Button type="submit" disabled={!keyword.trim() || isLoading}>
             {isLoading ? "Generating..." : "Generate Ideas"}
           </Button>

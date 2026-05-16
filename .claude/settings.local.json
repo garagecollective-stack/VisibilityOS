@@ -18,7 +18,32 @@
       "Bash(\"../../node_modules/.bin/drizzle-kit\" generate *)",
       "Bash(node -e \"require\\('dotenv/config'\\); \")",
       "Bash(node --require dotenv/config src/migrate.ts)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(PGPASSWORD='YourNewPassword123!' psql *)",
+      "Bash(node packages/db/seeds/seed-locations.js)",
+      "Bash(curl -s \"http://localhost:3001/api/locations/states?country_code=2356\")",
+      "Bash(curl -s \"http://localhost:3001/api/locations/cities?state_code=20456\")",
+      "Bash(node -e \"let d=''; process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>console.log\\(JSON.parse\\(d\\).length\\)\\)\")",
+      "Bash(curl -s http://localhost:3001/api/locations/countries)",
+      "Bash(node -e \"let d=''; process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>console.log\\(JSON.parse\\(d\\).length+' states/UTs'\\)\\)\")",
+      "Bash(curl -s \"http://localhost:3001/api/locations/cities?state_code=20457\")",
+      "Bash(node -e \"let d=''; process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>{const j=JSON.parse\\(d\\); console.log\\(j.length+' cities'\\); console.log\\(j.slice\\(0,3\\)\\)}\\)\")",
+      "Bash(curl -s -w \"HTTP %{http_code}\\\\n\" \"http://localhost:3001/api/locations/cities?state_code=99999999\")",
+      "Bash(curl -s -w \"HTTP %{http_code}\\\\n\" \"http://localhost:3001/api/locations/states\")",
+      "Bash(kill %1)",
+      "Bash(echo \"EXIT $?\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/api/locations/countries)",
+      "Bash(node -e \"let d=''; process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>{const j=JSON.parse\\(d\\); console.log\\(j.length+' states/UTs, first 3:'\\); console.log\\(j.slice\\(0,3\\)\\)}\\)\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3003)",
+      "Bash(curl -s -i -X OPTIONS http://localhost:3001/api/locations/countries -H \"Origin: http://localhost:3002\" -H \"Access-Control-Request-Method: GET\")",
+      "Bash(curl -s -i -X OPTIONS http://localhost:3001/api/locations/countries -H \"Origin: http://localhost:3000\" -H \"Access-Control-Request-Method: GET\")",
+      "Bash(curl -s -i -X OPTIONS http://localhost:3001/api/locations/countries -H \"Origin: http://evil.example.com\" -H \"Access-Control-Request-Method: GET\")",
+      "Bash(netstat -ano)",
+      "Bash(powershell *])",
+      "Bash(taskkill /F /PID 24488)",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 24488 -Force\")",
+      "Bash(awk -F: '{print $3}')",
+      "Bash(awk '{s+=$NF} END {print \"sum:\",s}')"
     ]
   }
 }

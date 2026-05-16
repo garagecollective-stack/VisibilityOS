@@ -8,7 +8,7 @@ export default function SignUpPage() {
           <h1 className="text-3xl font-bold text-white">VisibilityOS</h1>
           <p className="text-slate-400 mt-2">Start for free — no credit card required</p>
         </div>
-        <SignUp />
+        <SignUp forceRedirectUrl="/dashboard" signInUrl="/sign-in" />
       </div>
     </div>
   );

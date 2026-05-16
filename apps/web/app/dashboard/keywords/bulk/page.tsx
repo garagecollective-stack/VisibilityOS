@@ -33,7 +33,6 @@ import { IntentBadge } from "@/components/keywords/intent-badge";
 import { KdBadge } from "@/components/keywords/kd-badge";
 import { SaveToListDialog } from "@/components/keywords/save-to-list-dialog";
 import { Sparkline } from "@/components/keywords/sparkline";
-import { CountrySelector } from "@/components/shared/country-selector";
 import { DeviceToggle, type Device } from "@/components/shared/device-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -76,6 +75,11 @@ const LOADING_MESSAGES = [
   "Almost done...",
 ];
 
+// Location is currently fixed to India for Bulk Analysis — DataForSEO's
+// google_ads/search_volume returns the same data at country vs city level for
+// most keywords, and city-level lookups silently fall back to country for KD.
+const INDIA_LOCATION_CODE = 2356;
+
 const SAMPLE_KEYWORDS = [
   "best seo tools",
   "keyword research guide",
@@ -99,7 +103,6 @@ function opportunityScore(volume: number, kd: number | null): number {
 export default function KeywordBulkPage() {
   const { getToken } = useAuth();
   const [rawKeywords, setRawKeywords] = useState("");
-  const [location, setLocation] = useState<string>("2356");
   const [device, setDevice] = useState<Device>("desktop");
 
   const [results, setResults] = useState<KeywordBulkResult | null>(null);
@@ -128,10 +131,8 @@ export default function KeywordBulkPage() {
 
   useEffect(() => {
     const kws = ssGet("lastBulkKeywords");
-    const storedLocation = ssGet("lastBulkLocation");
     const storedDevice = ssGet("lastBulkDevice");
     const data = ssParse<KeywordBulkResult>("lastBulkResults");
-    if (storedLocation) setLocation(storedLocation);
     if (storedDevice === "desktop" || storedDevice === "mobile") setDevice(storedDevice);
     if (kws !== null && data) {
       setRawKeywords(kws);
@@ -160,7 +161,7 @@ export default function KeywordBulkPage() {
         method: "POST",
         body: JSON.stringify({
           keywords: kws,
-          locationCode: Number(location),
+          locationCode: INDIA_LOCATION_CODE,
           languageCode: "en",
           device,
         }),
@@ -172,7 +173,6 @@ export default function KeywordBulkPage() {
       const label = `${data.results.length} keyword${data.results.length === 1 ? "" : "s"}`;
       setResultsFor(label);
       ssSet("lastBulkKeywords", rawKeywords);
-      ssSet("lastBulkLocation", location);
       ssSet("lastBulkDevice", device);
       ssStringify("lastBulkResults", data);
     },
@@ -196,7 +196,7 @@ export default function KeywordBulkPage() {
         `/keywords/projects/${trackProjectId}/tracked`,
         {
           method: "POST",
-          body: JSON.stringify({ keywords: trackKeywords, locationCode: Number(location), languageCode: "en", device }),
+          body: JSON.stringify({ keywords: trackKeywords, locationCode: INDIA_LOCATION_CODE, languageCode: "en", device }),
           token: token ?? undefined,
         }
       );
@@ -314,7 +314,6 @@ export default function KeywordBulkPage() {
       <Card>
         <CardContent className="space-y-4 p-6">
           <div className="flex flex-wrap items-center gap-3">
-            <CountrySelector value={location} onValueChange={setLocation} />
             <DeviceToggle value={device} onChange={setDevice} />
             <div className="ml-auto text-xs text-muted-foreground">
               Language: <span className="font-medium text-foreground">English</span>

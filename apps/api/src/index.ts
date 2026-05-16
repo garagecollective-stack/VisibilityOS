@@ -28,8 +28,11 @@ import billingRouter, { razorpayWebhookHandler } from "./routes/billing.js";
 import dashboardRouter from "./routes/dashboard.js";
 import accountRouter from "./routes/account.js";
 import gscRouter, { gscCallbackHandler } from "./routes/gsc.js";
+test/nitish-keyword-filter
+import locationsRouter from "./routes/locations.js";
 import reportsRouter from "./routes/reports.js";
 import settingsRouter from "./routes/settings.js";
+main
 
 const app = new Hono();
 
@@ -63,10 +66,21 @@ const allowedOrigins = ["http://localhost:3000", "http://localhost:3003"];
 const appUrl = process.env["NEXT_PUBLIC_APP_URL"];
 if (appUrl && !allowedOrigins.includes(appUrl)) allowedOrigins.push(appUrl);
 
+// In non-production, accept any http://localhost:<port> origin. Next.js auto-picks
+// the next free port (3001, 3002, …) when 3000 is in use; without this, fetches
+// fail silently with CORS-blocked responses.
+const isProd = process.env["NODE_ENV"] === "production";
+const localhostRe = /^http:\/\/localhost:\d+$/;
+
 app.use(
   "*",
   cors({
-    origin: allowedOrigins,
+    origin: (origin) => {
+      if (!origin) return null;
+      if (allowedOrigins.includes(origin)) return origin;
+      if (!isProd && localhostRe.test(origin)) return origin;
+      return null;
+    },
     credentials: true,
   })
 );
@@ -181,6 +195,9 @@ app.post("/api/billing/webhook/razorpay", razorpayWebhookHandler);
 
 // GSC OAuth callback — unauthenticated (Google redirects here after consent)
 app.get("/api/gsc/callback", gscCallbackHandler);
+
+// Locations dropdown data — public reference data, no auth needed
+app.route("/api/locations", locationsRouter);
 
 // ─── Clerk auth on all /api/* routes ─────────────────────────────────────────
 

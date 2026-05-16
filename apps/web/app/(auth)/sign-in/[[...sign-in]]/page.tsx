@@ -8,7 +8,7 @@ export default function SignInPage() {
           <h1 className="text-3xl font-bold text-white">VisibilityOS</h1>
           <p className="text-slate-400 mt-2">AI-powered SEO platform</p>
         </div>
-        <SignIn />
+        <SignIn forceRedirectUrl="/dashboard" signUpUrl="/sign-up" />
       </div>
     </div>
   );
