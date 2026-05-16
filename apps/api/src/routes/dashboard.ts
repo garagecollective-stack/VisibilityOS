@@ -2,8 +2,10 @@ import "../types.js";
 import { Hono } from "hono";
 import { getDb } from "../lib/db/index.js";
 import { clickhouse } from "../lib/clickhouse/index.js";
-import { backlinkSnapshots, projects, auditRuns } from "@garage-seo/db";
+import { getRedis } from "../lib/redis/index.js";
+import { backlinkSnapshots, projects, auditRuns, type PageSpeedEntry } from "@garage-seo/db";
 import { eq, and, desc } from "drizzle-orm";
+import { PageSpeedClient } from "@garage-seo/google-apis";
 
 const router = new Hono();
 
@@ -127,6 +129,64 @@ router.get("/:projectId", async (c) => {
     })(),
   ]);
 
+  // PageSpeed: read from latest audit's pagespeed_results first, then fall back to live call
+  let pagespeed: {
+    mobile: number | null;
+    desktop: number | null;
+    lcp_ms: number | null;
+    cls: number | null;
+    last_checked: string;
+  } | null = null;
+
+  // 1. Check the latest completed audit for a stored homepage entry
+  const auditPsResults = (latestAudit?.pagespeedResults ?? []) as PageSpeedEntry[];
+  const homepageEntry = auditPsResults.find((e) => e.is_homepage);
+  if (homepageEntry) {
+    pagespeed = {
+      mobile: homepageEntry.mobile_score,
+      desktop: homepageEntry.desktop_score,
+      lcp_ms: homepageEntry.lcp_ms,
+      cls: homepageEntry.cls,
+      last_checked: latestAudit?.completedAt?.toISOString() ?? new Date().toISOString(),
+    };
+  }
+
+  // 2. Fallback: call PageSpeed directly (cached 6h) if audit had no data
+  if (!pagespeed) {
+    const pageSpeedKey = process.env["GOOGLE_PAGESPEED_API_KEY"];
+    if (pageSpeedKey) {
+      try {
+        const redis = getRedis();
+        const cacheKey = `pagespeed:${projectId}`;
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+          pagespeed = JSON.parse(cached);
+        } else {
+          const psClient = new PageSpeedClient(pageSpeedKey);
+          const homepageUrl = `https://${project.domain}`;
+          const [mobileRes, desktopRes] = await Promise.allSettled([
+            psClient.analyze(homepageUrl, "mobile"),
+            psClient.analyze(homepageUrl, "desktop"),
+          ]);
+          const mobile = mobileRes.status === "fulfilled" ? mobileRes.value : null;
+          const desktop = desktopRes.status === "fulfilled" ? desktopRes.value : null;
+          if (mobile) {
+            pagespeed = {
+              mobile: mobile.performance_score,
+              desktop: desktop?.performance_score ?? null,
+              lcp_ms: mobile.lcp,
+              cls: mobile.cls,
+              last_checked: new Date().toISOString(),
+            };
+            await redis.setex(cacheKey, 6 * 3600, JSON.stringify(pagespeed));
+          }
+        }
+      } catch {
+        // Non-fatal — pagespeed stays null
+      }
+    }
+  }
+
   return c.json({
     backlinks: {
       referringDomains: latestSnap?.referringDomains ?? null,
@@ -144,6 +204,7 @@ router.get("/:projectId", async (c) => {
     keywordDistribution,
     keywordChanges,
     topPages,
+    pagespeed,
   });
 });
 

@@ -3,11 +3,25 @@ import {
   text,
   timestamp,
   pgEnum,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createId } from "../utils.js";
 
 export const planEnum = pgEnum("plan", ["starter", "pro", "agency", "enterprise"]);
+
+export interface OrgSettings {
+  website?: string;
+  industry?: string;
+  teamSize?: string;
+  defaultCountry?: string;
+  defaultCrawlFrequency?: string;
+  defaultMaxPages?: number;
+  weeklyDigest?: boolean;
+  monthlyReport?: boolean;
+  productUpdates?: boolean;
+  notificationEmail?: string;
+}
 
 export const organizations = pgTable("organizations", {
   id: text("id").primaryKey().$defaultFn(createId),
@@ -16,6 +30,7 @@ export const organizations = pgTable("organizations", {
   plan: planEnum("plan").notNull().default("starter"),
   stripeCustomerId: text("stripe_customer_id"),
   razorpayCustomerId: text("razorpay_customer_id"),
+  settings: jsonb("settings").$type<OrgSettings>().notNull().default({}),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
