@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ProjectSettingsTab } from "@/components/settings/project-settings-tab";
 import { OrgSettingsTab } from "@/components/settings/org-settings-tab";
 import { NotificationsTab } from "@/components/settings/notifications-tab";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 
 interface Project {
@@ -45,15 +46,10 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Settings</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Configure your project and workspace preferences.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Configure your project and workspace preferences."
+      />
 
       <Tabs defaultValue="project">
         <div className="flex items-center justify-between flex-wrap gap-3">

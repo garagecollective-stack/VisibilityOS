@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -252,6 +253,7 @@ export default function CompetitorsPage() {
       const token = await getToken();
       return apiClient<{ projects: Project[] }>("/projects", { token: token ?? undefined });
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const projectList = projectsQuery.data?.projects ?? [];
@@ -275,6 +277,7 @@ export default function CompetitorsPage() {
         { token: token ?? undefined }
       );
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const competitorList = competitorsQuery.data?.competitors ?? [];
@@ -301,6 +304,7 @@ export default function CompetitorsPage() {
         }
       );
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   function openDiscover() {
@@ -369,6 +373,7 @@ export default function CompetitorsPage() {
         { token: token ?? undefined }
       );
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const commonQuery = useQuery({
@@ -381,6 +386,7 @@ export default function CompetitorsPage() {
         { token: token ?? undefined }
       );
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const topPagesQuery = useQuery({
@@ -393,6 +399,7 @@ export default function CompetitorsPage() {
         { token: token ?? undefined }
       );
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const backlinksQuery = useQuery({
@@ -405,6 +412,7 @@ export default function CompetitorsPage() {
         { token: token ?? undefined }
       );
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   // ── Your domain card data ─────────────────────────────────────────────────────
@@ -436,39 +444,36 @@ export default function CompetitorsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold">Competitors</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">
-            Track, compare, and outrank your competition
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {projectList.length > 0 && (
-            <DashboardProjectSelector
-              projects={projectList}
-              value={selectedProjectId}
-              onValueChange={(id) => {
-                setSelectedProjectId(id);
-                setSelectedCompetitorDomain("");
-              }}
-            />
-          )}
-          {selectedProjectId && (
-            <>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={openDiscover}>
-                <Sparkles className="h-4 w-4" />
-                Discover
-              </Button>
-              <Button size="sm" className="gap-1.5" onClick={() => setAddManuallyOpen(true)}>
-                <Plus className="h-4 w-4" />
-                Add Competitor
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title="Competitors"
+        description="Track, compare, and outrank your competition."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {projectList.length > 0 && (
+              <DashboardProjectSelector
+                projects={projectList}
+                value={selectedProjectId}
+                onValueChange={(id) => {
+                  setSelectedProjectId(id);
+                  setSelectedCompetitorDomain("");
+                }}
+              />
+            )}
+            {selectedProjectId && (
+              <>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={openDiscover}>
+                  <Sparkles className="h-4 w-4" />
+                  Discover
+                </Button>
+                <Button size="sm" className="gap-1.5" onClick={() => setAddManuallyOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Add Competitor
+                </Button>
+              </>
+            )}
+          </div>
+        }
+      />
 
       {/* ── No project selected ────────────────────────────────────────────── */}
       {!selectedProjectId && (

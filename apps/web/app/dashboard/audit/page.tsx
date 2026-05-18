@@ -21,6 +21,7 @@ import {
   AuditHistoryCard,
   type AuditRunSummary,
 } from "@/components/audit/audit-history-card";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 
 type Project = { id: string; name: string; domain: string };
@@ -39,6 +40,7 @@ export default function AuditPage() {
         token: token ?? undefined,
       });
     },
+    staleTime: 5 * 60 * 1000,
   });
   const projects = projectsQuery.data?.projects ?? [];
 
@@ -58,6 +60,7 @@ export default function AuditPage() {
       );
     },
     enabled: !!selectedProjectId,
+    staleTime: 30 * 1000,
     refetchInterval: (query) => {
       const runs = (query.state.data as { runs: AuditRunSummary[] } | undefined)?.runs ?? [];
       return runs.some((r) => r.status === "pending" || r.status === "running") ? 5000 : false;
@@ -91,14 +94,10 @@ export default function AuditPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold">Site Audit</h2>
-          <p className="text-sm text-muted-foreground">
-            Crawl your website and surface technical SEO issues by category and severity.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Site Audit"
+        description="Crawl your website and surface technical SEO issues by category and severity."
+      />
 
       {/* Project selector + start button */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

@@ -24,6 +24,7 @@ import { ProfileTab } from "@/components/account/profile-tab";
 import { OrgTab } from "@/components/account/org-tab";
 import { IntegrationsTab } from "@/components/account/integrations-tab";
 import { BillingTab } from "@/components/account/billing-tab";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -407,13 +408,10 @@ function AccountPageInner() {
         </div>
       )}
 
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Account</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">
-          Manage your profile, organization, integrations, and billing
-        </p>
-      </div>
+      <PageHeader
+        title="Account"
+        description="Manage your profile, organization, integrations, and billing."
+      />
 
       {/* 2-column grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">

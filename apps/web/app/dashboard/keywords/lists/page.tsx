@@ -25,6 +25,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { PageHeader } from "@/components/shared/page-header";
 import { IntentBadge } from "@/components/keywords/intent-badge";
 import { KdBadge } from "@/components/keywords/kd-badge";
 import { Button } from "@/components/ui/button";
@@ -364,15 +365,12 @@ export default function KeywordListsPage() {
   );
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div className="space-y-2">
-          <h2 className="text-xl font-semibold">Keyword Lists</h2>
-          <p className="text-sm text-muted-foreground">
-            Save strategic groups of keywords, enrich them with live SEO metrics, and push to the rank tracker.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <PageHeader
+        title="Keyword Lists"
+        description="Save strategic groups of keywords, enrich them with live SEO metrics, and push to the rank tracker."
+        action={
+          <div className="flex flex-wrap gap-2">
           <div className="min-w-52">
             <Select value={selectedProject} onValueChange={setSelectedProject}>
               <SelectTrigger>
@@ -393,7 +391,8 @@ export default function KeywordListsPage() {
             New List
           </Button>
         </div>
-      </div>
+        }
+      />
 
       {(projectsQuery.isLoading || listsQuery.isLoading) && <ListsSkeleton />}
 

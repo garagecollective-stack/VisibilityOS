@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Bookmark, Download, Layers, RotateCcw } from "lucide-react";
+import { PageHeader } from "@/components/shared/page-header";
 import { SaveToListDialog } from "@/components/keywords/save-to-list-dialog";
 import { StrategyCalendar } from "@/components/keywords/strategy-calendar";
 import { StrategyClusterCard } from "@/components/keywords/strategy-cluster-card";
@@ -209,13 +210,11 @@ export default function KeywordStrategyPage() {
   const showResults = results !== null && !isPending;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Keyword Strategy Builder</h2>
-        <p className="text-sm text-muted-foreground">
-          Turn a topic into a Claude-generated keyword strategy: pillar, clusters, quick wins, and an 8-week content calendar.
-        </p>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <PageHeader
+        title="Keyword Strategy Builder"
+        description="Turn a topic into a Claude-generated keyword strategy: pillar, clusters, quick wins, and an 8-week content calendar."
+      />
 
       <Card>
         <CardContent className="space-y-4 p-6">

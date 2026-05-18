@@ -53,6 +53,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 import { exportKeywordsToCSV, formatMetric, type KeywordIdeaResult, type KeywordRow } from "@/lib/keywords";
 import { ssGet, ssParse, ssSet, ssStringify } from "@/lib/session-store";
@@ -238,13 +239,11 @@ export default function KeywordIdeasPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Keyword Ideas</h2>
-        <p className="text-sm text-muted-foreground">
-          Generate adjacent keyword opportunities and explore them by intent, competition, or question phrasing.
-        </p>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <PageHeader
+        title="Keyword Ideas"
+        description="Generate adjacent keyword opportunities and explore them by intent, competition, or question phrasing."
+      />
 
       <form onSubmit={handleSubmit} className="space-y-3">
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
