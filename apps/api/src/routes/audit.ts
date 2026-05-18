@@ -83,7 +83,21 @@ router.get("/runs/:projectId", async (c) => {
   if (!project) return c.json({ error: "Project not found" }, 404);
 
   const runs = await db
-    .select()
+    .select({
+      id: auditRuns.id,
+      projectId: auditRuns.projectId,
+      status: auditRuns.status,
+      pagesCrawled: auditRuns.pagesCrawled,
+      totalIssues: auditRuns.totalIssues,
+      criticalIssues: auditRuns.criticalIssues,
+      warnings: auditRuns.warnings,
+      notices: auditRuns.notices,
+      technicalScore: auditRuns.technicalScore,
+      cwvScore: auditRuns.cwvScore,
+      startedAt: auditRuns.startedAt,
+      completedAt: auditRuns.completedAt,
+      failureReason: auditRuns.failureReason,
+    })
     .from(auditRuns)
     .where(eq(auditRuns.projectId, projectId))
     .orderBy(desc(auditRuns.startedAt))

@@ -154,6 +154,7 @@ export default function DashboardPage() {
       const token = await getToken();
       return apiClient<{ projects: Project[] }>("/projects", { token: token ?? undefined });
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const projects = projectsQuery.data?.projects ?? [];
@@ -185,6 +186,7 @@ export default function DashboardPage() {
       });
     },
     enabled: !!selectedProjectId,
+    staleTime: 60 * 1000,
   });
 
   const latestCompletedAudit =
@@ -200,6 +202,7 @@ export default function DashboardPage() {
       );
     },
     enabled: !!selectedProjectId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const visibilityQuery = useQuery({
@@ -213,6 +216,7 @@ export default function DashboardPage() {
     },
     enabled: !!selectedProjectId,
     retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   const dashboardQuery = useQuery({
@@ -225,6 +229,7 @@ export default function DashboardPage() {
     },
     enabled: !!selectedProjectId,
     retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   const trackedCount = trackedKeywordsQuery.data?.keywords.length ?? 0;

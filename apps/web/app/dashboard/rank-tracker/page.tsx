@@ -66,6 +66,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 import { KEYWORD_LOCATIONS } from "@/lib/keywords";
 import { ssGet, ssSet } from "@/lib/session-store";
@@ -181,6 +182,7 @@ export default function RankTrackerPage() {
       const token = await getToken();
       return apiClient<{ projects: Project[] }>("/projects", { token: token ?? undefined });
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const projects = projectsQuery.data?.projects ?? [];
@@ -213,6 +215,7 @@ export default function RankTrackerPage() {
     },
     enabled: !!selectedProjectId,
     retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   const visibilityQuery = useQuery({
@@ -226,6 +229,7 @@ export default function RankTrackerPage() {
     },
     enabled: !!selectedProjectId,
     retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   const tracked = twpQuery.data?.keywords ?? [];
@@ -311,41 +315,37 @@ export default function RankTrackerPage() {
 
   return (
     <div className="space-y-6 p-6">
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Rank Tracker</h1>
-          <p className="text-sm text-muted-foreground">
-            Daily Google rankings for your tracked keywords, with visibility trend and SERP context.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {projects.length > 0 && (
-            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-              <SelectTrigger className="min-w-[260px]">
-                <SelectValue placeholder="Select a project" />
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                    <span className="ml-1.5 text-xs text-muted-foreground">{p.domain}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {selectedProjectId && tracked.length > 0 && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAddDialogOpen(true)}
-              >
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Add Keywords
-              </Button>
-              <Button
+      <PageHeader
+        title="Rank Tracker"
+        description="Daily Google rankings for your tracked keywords, with visibility trend and SERP context."
+        action={
+          <div className="flex items-center gap-2">
+            {projects.length > 0 && (
+              <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                <SelectTrigger className="min-w-[220px]">
+                  <SelectValue placeholder="Select a project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                      <span className="ml-1.5 text-xs text-muted-foreground">{p.domain}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {selectedProjectId && tracked.length > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddDialogOpen(true)}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Add Keywords
+                </Button>
+                <Button
                 variant="outline"
                 size="sm"
                 onClick={() => checkNowMutation.mutate()}
@@ -354,10 +354,11 @@ export default function RankTrackerPage() {
                 <RotateCw className={cn("mr-1.5 h-3.5 w-3.5", checkNowMutation.isPending && "animate-spin")} />
                 {checkNowMutation.isPending ? "Queuing…" : "Check Now"}
               </Button>
-            </>
-          )}
-        </div>
-      </div>
+              </>
+            )}
+          </div>
+        }
+      />
 
       {/* Daily check indicator */}
       {tracked.length > 0 && (
@@ -949,6 +950,7 @@ function KeywordDetailDrawer({
       });
     },
     retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   const series =

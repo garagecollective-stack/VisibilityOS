@@ -19,10 +19,10 @@ export function EmptyState({ icon, title, description, action, className, compac
           compact ? "py-8" : "py-14"
         )}
       >
-        <div className="mb-3 text-muted-foreground/50">{icon}</div>
-        <p className="font-medium">{title}</p>
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/[0.08] text-primary">{icon}</div>
+        <p className="text-base font-semibold mt-1">{title}</p>
         {description && (
-          <p className="mt-1 max-w-md text-sm text-muted-foreground">{description}</p>
+          <p className="mt-2 max-w-sm text-sm text-muted-foreground leading-relaxed">{description}</p>
         )}
         {action && <div className="mt-5">{action}</div>}
       </CardContent>

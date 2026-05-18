@@ -62,6 +62,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 import { downloadCsv, exportKeywordsToCSV } from "@/lib/export-csv";
 import { formatMetric, type KeywordBulkResult, type KeywordBulkRow, type ProjectSummary } from "@/lib/keywords";
@@ -302,13 +303,11 @@ export default function KeywordBulkPage() {
   const showResults = results !== null && !isPending;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Keyword Bulk Analysis</h2>
-        <p className="text-sm text-muted-foreground">
-          Paste up to 200 keywords or upload a CSV to compare volume, CPC, intent, and competition.
-        </p>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <PageHeader
+        title="Keyword Bulk Analysis"
+        description="Paste up to 200 keywords or upload a CSV to compare volume, CPC, intent, and competition."
+      />
 
       {/* Input section */}
       <Card>

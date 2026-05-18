@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 import {
   formatMetric,
@@ -189,13 +190,11 @@ export default function KeywordOverviewPage() {
       : results?.main.serp_item_types ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold">Keyword Overview</h2>
-        <p className="text-sm text-muted-foreground">
-          Inspect demand, intent, and adjacent opportunities around a target keyword.
-        </p>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <PageHeader
+        title="Keyword Overview"
+        description="Inspect demand, intent, and adjacent opportunities around a target keyword."
+      />
 
       <form onSubmit={handleSubmit} className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row">

@@ -15,7 +15,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
               <span className="text-white font-bold text-xs">V</span>
             </div>
-            <span className="font-semibold text-sm text-white">VisibilityOS</span>
+            <span className="font-bold text-sm tracking-tight text-white">VisibilityOS</span>
           </Link>
         </div>
 
@@ -58,7 +58,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Settings className="w-4 h-4 shrink-0" />
             Settings
           </Link>
-          <div className="flex items-center gap-3 px-3 py-2">
+          <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#1E293B] transition-colors cursor-pointer">
             <UserButton
               afterSignOutUrl="/sign-in"
               appearance={{
@@ -67,7 +67,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 },
               }}
             />
-            <span className="text-sm text-[#94A3B8]">Sign out</span>
+            <span className="text-sm text-[#94A3B8]">Your account</span>
           </div>
         </div>
       </aside>

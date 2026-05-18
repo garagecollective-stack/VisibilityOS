@@ -50,6 +50,8 @@ export function LocationFilter({
   const [stateCode, setStateCode] = useState<number | null>(null);
   const [cityCode, setCityCode] = useState<number | null>(null);
 
+  const prevCountryCodeRef = useRef<number | null>(null);
+  const prevStateCodeRef = useRef<number | null>(null);
   const statesAbortRef = useRef<AbortController | null>(null);
   const citiesAbortRef = useRef<AbortController | null>(null);
 
@@ -84,11 +86,18 @@ export function LocationFilter({
 
   // 2. When country changes, fetch its states (and reset state/city below).
   useEffect(() => {
-    setStates([]);
-    setStateCode(null);
-    setCities([]);
-    setCityCode(null);
-    if (countryCode == null) return;
+    if (prevCountryCodeRef.current !== countryCode) {
+      prevCountryCodeRef.current = countryCode;
+      setStateCode(null);
+      setCityCode(null);
+      setCities([]);
+    }
+
+    if (!countryCode) {
+      setStates([]);
+      setLoadingStates(false);
+      return;
+    }
 
     statesAbortRef.current?.abort();
     const controller = new AbortController();
@@ -115,9 +124,16 @@ export function LocationFilter({
 
   // 3. When state changes, fetch its cities.
   useEffect(() => {
-    setCities([]);
-    setCityCode(null);
-    if (stateCode == null) return;
+    if (prevStateCodeRef.current !== stateCode) {
+      prevStateCodeRef.current = stateCode;
+      setCityCode(null);
+      setCities([]);
+    }
+
+    if (!stateCode) {
+      setLoadingCities(false);
+      return;
+    }
 
     citiesAbortRef.current?.abort();
     const controller = new AbortController();
@@ -158,7 +174,8 @@ export function LocationFilter({
   }
 
   const handleCountryChange = (value: string) => {
-    const code = Number(value);
+    const code = parseInt(value, 10);
+    if (!Number.isFinite(code) || code <= 0) return;
     setCountryCode(code);
     setStateCode(null);
     setCityCode(null);
@@ -167,7 +184,8 @@ export function LocationFilter({
   };
 
   const handleStateChange = (value: string) => {
-    const code = Number(value);
+    const code = parseInt(value, 10);
+    if (!Number.isFinite(code) || code <= 0) return;
     setStateCode(code);
     setCityCode(null);
     const country = countries.find((c) => c.location_code === countryCode);
@@ -176,7 +194,8 @@ export function LocationFilter({
   };
 
   const handleCityChange = (value: string) => {
-    const code = Number(value);
+    const code = parseInt(value, 10);
+    if (!Number.isFinite(code) || code <= 0) return;
     setCityCode(code);
     const country = countries.find((c) => c.location_code === countryCode);
     const state = states.find((s) => s.location_code === stateCode);
@@ -188,7 +207,7 @@ export function LocationFilter({
     <div className={cn("grid gap-4 sm:grid-cols-3", className)}>
       <Field label="Country" loading={loadingCountries}>
         <Select
-          value={countryCode != null ? String(countryCode) : undefined}
+          value={countryCode ? String(countryCode) : ""}
           onValueChange={handleCountryChange}
           disabled={loadingCountries || countries.length === 0}
         >
@@ -207,9 +226,9 @@ export function LocationFilter({
 
       <Field label="State" loading={loadingStates}>
         <Select
-          value={stateCode != null ? String(stateCode) : undefined}
+          value={stateCode ? String(stateCode) : ""}
           onValueChange={handleStateChange}
-          disabled={countryCode == null || loadingStates || states.length === 0}
+          disabled={!countryCode || loadingStates || states.length === 0}
         >
           <SelectTrigger>
             <SelectValue placeholder="Select State" />
@@ -226,14 +245,14 @@ export function LocationFilter({
 
       <Field label="City" loading={loadingCities}>
         <Select
-          value={cityCode != null ? String(cityCode) : undefined}
+          value={cityCode ? String(cityCode) : ""}
           onValueChange={handleCityChange}
-          disabled={stateCode == null || loadingCities}
+          disabled={!stateCode || loadingCities}
         >
           <SelectTrigger>
             <SelectValue
               placeholder={
-                stateCode != null && !loadingCities && cities.length === 0
+                !!stateCode && !loadingCities && cities.length === 0
                   ? "No cities available"
                   : "Select City"
               }

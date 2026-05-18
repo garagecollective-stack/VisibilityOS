@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { GenerateReportDialog } from "@/components/reports/generate-report-dialog";
 import { ReportCard, type ReportSummary } from "@/components/reports/report-card";
+import { PageHeader } from "@/components/shared/page-header";
 import { apiClient } from "@/lib/api";
 
 interface Project {
@@ -100,19 +101,16 @@ export default function ReportsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-4xl">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Reports</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Generate PDF-ready SEO reports combining audit, keyword, and GSC data.
-          </p>
-        </div>
-        <Button onClick={() => setDialogOpen(true)} disabled={projects.length === 0}>
-          <Plus className="mr-1.5 h-4 w-4" />
-          Generate Report
-        </Button>
-      </div>
+      <PageHeader
+        title="Reports"
+        description="Generate PDF-ready SEO reports combining audit, keyword, and GSC data."
+        action={
+          <Button onClick={() => setDialogOpen(true)} disabled={projects.length === 0}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            Generate Report
+          </Button>
+        }
+      />
 
       {/* Project selector */}
       {!isLoading && projects.length > 1 && (

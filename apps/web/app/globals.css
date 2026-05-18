@@ -66,6 +66,22 @@
   }
   body {
     @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
   }
 }
 
@@ -75,6 +91,9 @@
   }
   .card-shadow-hover {
     box-shadow: var(--card-shadow-hover);
+  }
+  .page-content {
+    @apply max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6;
   }
 }
 

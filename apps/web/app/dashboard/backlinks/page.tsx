@@ -4,15 +4,24 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api";
+import dynamic from "next/dynamic";
 import type { OverviewData, HistoryData, AnchorsData, ReferringDomainsData } from "@/components/backlinks/types";
 import { OverviewCards } from "@/components/backlinks/overview-cards";
-import { BacklinkGrowthChart } from "@/components/backlinks/backlink-growth-chart";
-import { AnchorTextChart } from "@/components/backlinks/anchor-text-chart";
 import { ReferringDomainsTable } from "@/components/backlinks/referring-domains-table";
 import { NewLostBacklinks } from "@/components/backlinks/new-lost-backlinks";
 import { BacklinksTable } from "@/components/backlinks/backlinks-table";
+
+const BacklinkGrowthChart = dynamic(
+  () => import("@/components/backlinks/backlink-growth-chart").then((m) => m.BacklinkGrowthChart),
+  { ssr: false }
+);
+const AnchorTextChart = dynamic(
+  () => import("@/components/backlinks/anchor-text-chart").then((m) => m.AnchorTextChart),
+  { ssr: false }
+);
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/shared/page-header";
 
 interface Project {
   id: string;
@@ -30,6 +39,7 @@ export default function BacklinksPage() {
       const token = await getToken();
       return apiClient<{ projects: Project[] }>("/projects", { token: token ?? undefined });
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const projects = projectsQuery.data?.projects ?? [];
@@ -50,6 +60,7 @@ export default function BacklinksPage() {
       );
     },
     enabled: !!selectedProjectId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const historyQuery = useQuery({
@@ -62,6 +73,7 @@ export default function BacklinksPage() {
       );
     },
     enabled: !!selectedProjectId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const anchorsQuery = useQuery({
@@ -74,6 +86,7 @@ export default function BacklinksPage() {
       );
     },
     enabled: !!selectedProjectId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const referringDomainsQuery = useQuery({
@@ -86,46 +99,38 @@ export default function BacklinksPage() {
       );
     },
     enabled: !!selectedProjectId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const isSampleData = overviewQuery.data?.isSampleData ?? false;
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold">Backlinks</h1>
+      <PageHeader
+        title="Backlinks"
+        description="Analyze referring domains, link authority, and anchor text distribution."
+        action={
+          <div className="flex items-center gap-3">
             {isSampleData && (
-              <Badge
-                variant="outline"
-                className="bg-orange-50 text-orange-700 border-orange-200 text-xs font-medium"
-              >
-                Sample Data
-              </Badge>
+              <Badge variant="warning">Sample Data</Badge>
+            )}
+            {!projectsQuery.isLoading && projects.length > 1 && (
+              <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                <SelectTrigger className="w-56">
+                  <SelectValue placeholder="Select a project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} — {p.domain}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Analyze referring domains, link authority, and anchor text distribution.
-          </p>
-        </div>
-
-        {!projectsQuery.isLoading && projects.length > 1 && (
-          <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-            <SelectTrigger className="w-56">
-              <SelectValue placeholder="Select a project" />
-            </SelectTrigger>
-            <SelectContent>
-              {projects.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name} — {p.domain}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </div>
+        }
+      />
 
       {/* Section 1 — Overview cards */}
       <OverviewCards
